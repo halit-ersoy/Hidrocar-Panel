@@ -385,7 +385,7 @@ class _CrossPageState extends State<CrossPage> {
             Icon(
               Icons.warning_amber_rounded,
               color: warningLevel == WarningLevel.yellow ? Colors.amber : Colors.red,
-              size: 36,
+              size: 48,
             ),
           ],
         ],
