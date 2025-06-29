@@ -11,6 +11,16 @@ import 'car_data.dart';
 // Global key for navigator to be used across the app
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
+// Track the currently displayed page
+enum CurrentPage {
+  cross,
+  backCamera,
+  frontCamera
+}
+
+// Global variable to keep track of the current page
+CurrentPage currentPage = CurrentPage.cross;
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersive);
@@ -25,28 +35,35 @@ void main() {
 // Global key handler function that works across all screens
 bool _handleGlobalKeyEvent(KeyEvent event) {
   if (event is KeyDownEvent) {
-    print("Key pressed globally: ${event.logicalKey}");
-
     if (event.logicalKey == LogicalKeyboardKey.f1) {
-      print("F1 pressed - Navigating to CrossPage");
-      navigatorKey.currentState?.pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const CrossPage()),
-            (route) => false,
-      );
+      // Only navigate if not already on CrossPage
+      if (currentPage != CurrentPage.cross) {
+        navigatorKey.currentState?.pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const CrossPage()),
+              (route) => false,
+        );
+        currentPage = CurrentPage.cross; // Update current page after navigation
+      }
       return true;
     } else if (event.logicalKey == LogicalKeyboardKey.f2) {
-      print("F2 pressed - Navigating to BackCamera");
-      navigatorKey.currentState?.pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const BackCamera()),
-            (route) => false,
-      );
+      // Only navigate if not already on BackCamera
+      if (currentPage != CurrentPage.backCamera) {
+        navigatorKey.currentState?.pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const BackCamera()),
+              (route) => false,
+        );
+        currentPage = CurrentPage.backCamera; // Update current page after navigation
+      }
       return true;
     } else if (event.logicalKey == LogicalKeyboardKey.f3) {
-      print("F3 pressed - Navigating to FrontCamera");
-      navigatorKey.currentState?.pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const FrontCamera()),
-            (route) => false,
-      );
+      // Only navigate if not already on FrontCamera
+      if (currentPage != CurrentPage.frontCamera) {
+        navigatorKey.currentState?.pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const FrontCamera()),
+              (route) => false,
+        );
+        currentPage = CurrentPage.frontCamera; // Update current page after navigation
+      }
       return true;
     }
   }
