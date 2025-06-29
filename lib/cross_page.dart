@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:hidrocar_panel/ui/painter/speedometer.dart';
-
 import 'car_data_service.dart';
 import 'car_data.dart';
+import 'function_key.dart';
 
 class CrossPage extends StatefulWidget {
   const CrossPage({super.key});
@@ -53,13 +53,15 @@ class _CrossPageState extends State<CrossPage> {
     // Check isolation resistance critical
     if (_carData.isolationResistance < 10) {
       hasCriticalWarning = true;
-      criticalMessage = "İzolasyon Direnci Kritik Seviyede!\n${_carData.isolationResistance.toInt()}Ω";
+      criticalMessage =
+          "İzolasyon Direnci Kritik Seviyede!\n${_carData.isolationResistance.toInt()}Ω";
     }
 
     // Check battery temperature critical
     if (_carData.batteryTemperature > 90) {
       hasCriticalWarning = true;
-      criticalMessage = "Batarya Sıcaklığı Kritik Seviyede!\n${_carData.batteryTemperature.toInt()}°C";
+      criticalMessage =
+          "Batarya Sıcaklığı Kritik Seviyede!\n${_carData.batteryTemperature.toInt()}°C";
     }
 
     // Determine warning levels
@@ -77,62 +79,111 @@ class _CrossPageState extends State<CrossPage> {
       temperatureWarningLevel = WarningLevel.yellow;
     }
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final screenWidth = constraints.maxWidth;
-        final screenHeight = constraints.maxHeight;
+    return Scaffold(
+        backgroundColor: Colors.black,
+        body: LayoutBuilder(
+          builder: (context, constraints) {
+            final screenWidth = constraints.maxWidth;
+            final screenHeight = constraints.maxHeight;
 
-        return Stack(
-          children: [
-            Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [Colors.black, Colors.blue.shade900],
+            return Stack(
+              children: [
+                Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [Colors.black, Colors.blue.shade900],
+                    ),
+                  ),
+                  child: SafeArea(
+                    child: Padding(
+                      padding: EdgeInsets.all(screenWidth * 0.02),
+                      child: Column(
+                        children: [
+                          _buildTopSection(),
+                          Expanded(
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  flex: 35,
+                                  child: _buildLeftPanel(context),
+                                ),
+                                Expanded(
+                                  flex: 50,
+                                  child: _buildCenterSpeedometer(screenHeight),
+                                ),
+                                Expanded(
+                                  flex: 35,
+                                  child: _buildRightPanel(
+                                    context,
+                                    isolationWarningLevel:
+                                        isolationWarningLevel,
+                                    temperatureWarningLevel:
+                                        temperatureWarningLevel,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-              child: SafeArea(
-                child: Padding(
-                  padding: EdgeInsets.all(screenWidth * 0.02),
-                  child: Column(
-                    children: [
-                      _buildTopSection(),
-                      Expanded(
+                // Show critical warning overlay if needed
+                if (hasCriticalWarning)
+                  Positioned.fill(
+                    child: _buildCriticalWarning(criticalMessage),
+                  ),
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.bottomCenter,
+                        end: Alignment.topCenter,
+                        colors: [
+                          Colors.black.withOpacity(0.8),
+                          Colors.transparent,
+                        ],
+                      ),
+                    ),
+                    child: Center(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.6),
+                          borderRadius: BorderRadius.circular(30),
+                          border: Border.all(
+                              color: Colors.blue.withOpacity(0.3), width: 1),
+                        ),
                         child: Row(
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            Expanded(
-                              flex: 35,
-                              child: _buildLeftPanel(context),
-                            ),
-                            Expanded(
-                              flex: 50,
-                              child: _buildCenterSpeedometer(screenHeight),
-                            ),
-                            Expanded(
-                              flex: 35,
-                              child: _buildRightPanel(context,
-                                isolationWarningLevel: isolationWarningLevel,
-                                temperatureWarningLevel: temperatureWarningLevel,
-                              ),
-                            ),
+                            FunctionKey(
+                                label: 'F1',
+                                description: 'Ana Ekran',
+                                isActive: true),
+                            SizedBox(width: 16),
+                            FunctionKey(
+                                label: 'F2', description: 'Arka Kamera'),
+                            SizedBox(width: 16),
+                            FunctionKey(label: 'F3', description: 'Ön Kamera'),
                           ],
                         ),
                       ),
-                    ],
+                    ),
                   ),
                 ),
-              ),
-            ),
-            // Show critical warning overlay if needed
-            if (hasCriticalWarning)
-              Positioned.fill(
-                child: _buildCriticalWarning(criticalMessage),
-              ),
-          ],
-        );
-      },
-    );
+              ],
+            );
+          },
+        ));
   }
 
   Widget _buildTopSection() {
@@ -212,9 +263,14 @@ class _CrossPageState extends State<CrossPage> {
       // Calculate time to full charge (remaining percentage to 100%)
       final remainingPercentage = 100 - _carData.batteryPercentage;
       // Assuming charging rate is proportional to charge power
-      final timeToFullHours = (remainingPercentage / ((_carData.chargePower / 1000) * 2)).floor();
-      final timeToFullMinutes = ((remainingPercentage / ((_carData.chargePower / 1000) * 2) - timeToFullHours) * 60).floor();
-      estimatedTimeText = 'Dolum: $timeToFullHours saat $timeToFullMinutes dakika';
+      final timeToFullHours =
+          (remainingPercentage / ((_carData.chargePower / 1000) * 2)).floor();
+      final timeToFullMinutes =
+          ((remainingPercentage / ((_carData.chargePower / 1000) * 2) -
+                      timeToFullHours) *
+                  60)
+              .floor();
+      estimatedTimeText = 'Dolum: $timeToFullHours saat $timeToFullMinutes dk';
     }
 
     return Container(
@@ -222,7 +278,8 @@ class _CrossPageState extends State<CrossPage> {
       decoration: BoxDecoration(
         color: Colors.black54,
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.blue.shade500.withOpacity(0.5), width: 2),
+        border:
+            Border.all(color: Colors.blue.shade500.withOpacity(0.5), width: 2),
         boxShadow: [
           BoxShadow(
             color: Colors.blue.shade900.withOpacity(0.3),
@@ -237,7 +294,8 @@ class _CrossPageState extends State<CrossPage> {
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
             _buildEnhancedInfoRow(
-              icon: isCharging ? Icons.battery_charging_full : Icons.battery_full,
+              icon:
+                  isCharging ? Icons.battery_charging_full : Icons.battery_full,
               title: 'Batarya Yüzdesi',
               value: '%${_carData.batteryPercentage.toInt()}',
               additionalInfo: estimatedTimeText,
@@ -270,7 +328,8 @@ class _CrossPageState extends State<CrossPage> {
     );
   }
 
-  Widget _buildRightPanel(BuildContext context, {
+  Widget _buildRightPanel(
+    BuildContext context, {
     WarningLevel? temperatureWarningLevel,
     WarningLevel? isolationWarningLevel,
   }) {
@@ -279,7 +338,8 @@ class _CrossPageState extends State<CrossPage> {
       decoration: BoxDecoration(
         color: Colors.black54,
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.blue.shade500.withOpacity(0.5), width: 2),
+        border:
+            Border.all(color: Colors.blue.shade500.withOpacity(0.5), width: 2),
         boxShadow: [
           BoxShadow(
             color: Colors.blue.shade900.withOpacity(0.3),
@@ -384,7 +444,9 @@ class _CrossPageState extends State<CrossPage> {
           if (warningLevel != null) ...[
             Icon(
               Icons.warning_amber_rounded,
-              color: warningLevel == WarningLevel.yellow ? Colors.amber : Colors.red,
+              color: warningLevel == WarningLevel.yellow
+                  ? Colors.amber
+                  : Colors.red,
               size: 48,
             ),
           ],

@@ -116,10 +116,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
             child: SlideTransition(
               position: Tween<Offset>(begin: Offset(0, 0.1), end: Offset.zero)
                   .animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
-              child: Scaffold(
-                backgroundColor: Colors.black,
-                body: CrossPage(),
-              ),
+              child: CrossPage()
             ),
           );
         },

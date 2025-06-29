@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_mjpeg/flutter_mjpeg.dart';
 import 'package:path/path.dart' as p;
+import 'function_key.dart';
 
 class BackCamera extends StatefulWidget {
   const BackCamera({super.key});
@@ -131,8 +132,8 @@ class _BackCameraState extends State<BackCamera> {
                 stream: streamUrl,
                 error: (context, error, stack) {
                   return Center(
-                    child: _buildErrorDisplay(
-                        'Yayın bağlantı hatası', error.toString()),
+                    child:
+                        _buildErrorDisplay('Bağlantı hatası', error.toString()),
                   );
                 },
                 loading: (context) {
@@ -152,7 +153,7 @@ class _BackCameraState extends State<BackCamera> {
                           ),
                           SizedBox(height: 20),
                           Text(
-                            'Kamera yayını başlatılıyor...',
+                            'Kamera başlatılıyor...',
                             style: TextStyle(
                               color: Colors.white,
                               fontSize: 18,
@@ -199,7 +200,7 @@ class _BackCameraState extends State<BackCamera> {
                     ),
                     SizedBox(height: 15),
                     Text(
-                      'Python sunucusu hazırlanıyor...',
+                      'Bağlantı kuruluyor...',
                       style: TextStyle(
                         color: Colors.white70,
                         fontSize: 16,
@@ -343,14 +344,14 @@ class _BackCameraState extends State<BackCamera> {
                     child: const Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        _FunctionKey(label: 'F1', description: 'Ana Ekran'),
+                        FunctionKey(label: 'F1', description: 'Ana Ekran'),
                         SizedBox(width: 16),
-                        _FunctionKey(
+                        FunctionKey(
                             label: 'F2',
                             description: 'Arka Kamera',
                             isActive: true),
                         SizedBox(width: 16),
-                        _FunctionKey(
+                        FunctionKey(
                           label: 'F3',
                           description: 'Ön Kamera',
                         ),
@@ -417,59 +418,6 @@ class _BackCameraState extends State<BackCamera> {
           ],
         ],
       ),
-    );
-  }
-}
-
-// Function key component for the navigation bar
-class _FunctionKey extends StatelessWidget {
-  final String label;
-  final String description;
-  final bool isActive;
-
-  const _FunctionKey({
-    required this.label,
-    required this.description,
-    this.isActive = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: isActive ? Colors.blue : Colors.grey.shade800,
-            borderRadius: BorderRadius.circular(4),
-            boxShadow: isActive
-                ? [
-                    BoxShadow(
-                      color: Colors.blue.withOpacity(0.4),
-                      blurRadius: 8,
-                      spreadRadius: 1,
-                    )
-                  ]
-                : null,
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
-            ),
-          ),
-        ),
-        const SizedBox(width: 6),
-        Text(
-          description,
-          style: TextStyle(
-            color: isActive ? Colors.white : Colors.white70,
-            fontWeight: isActive ? FontWeight.w500 : FontWeight.normal,
-          ),
-        ),
-      ],
     );
   }
 }

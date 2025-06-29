@@ -152,7 +152,7 @@ class _FrontCameraState extends State<FrontCamera> {
                           ),
                           SizedBox(height: 20),
                           Text(
-                            'Kamera yayını başlatılıyor...',
+                            'Kamera başlatılıyor...',
                             style: TextStyle(
                               color: Colors.white,
                               fontSize: 18,
@@ -199,7 +199,7 @@ class _FrontCameraState extends State<FrontCamera> {
                     ),
                     SizedBox(height: 15),
                     Text(
-                      'Python sunucusu hazırlanıyor...',
+                      'Bağlantı kuruluyor...',
                       style: TextStyle(
                         color: Colors.white70,
                         fontSize: 16,
