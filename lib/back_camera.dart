@@ -87,49 +87,52 @@ class _BackCameraState extends State<BackCamera> {
     });
 
     try {
-      final pythonExe = await _resolvePythonExe();
-      final scriptPath = p.join(Directory.current.path, 'camera.py');
+      final pythonExe = await _resolvePythonExe();        // (senin önceki yardımcı fonksiyonun)
+      final scriptPath = await _resolveScriptPath();      // (YENİ: betik yolu çözümü)
 
       if (pythonExe == null) {
         setState(() {
           _errorState = true;
-          _errorMessage = 'Uygun bir Python yürütücüsü bulunamadı. '
-              'PATH’e python/python3 ekleyin ya da PYTHON_EXEC ortam değişkeniyle yolu belirtin.';
+          _errorMessage =
+          'Python yürütücüsü bulunamadı. PATH’e python/python3 ekleyin '
+              'ya da PYTHON_EXEC ortam değişkeniyle yolu belirtin.';
         });
         return;
       }
 
-      if (!File(scriptPath).existsSync()) {
+      if (scriptPath == null) {
         setState(() {
           _errorState = true;
-          _errorMessage = 'Python betiği bulunamadı: $scriptPath';
+          _errorMessage =
+          'camera.py bulunamadı. CAMERA_PY ortam değişkeni ile tam yolu verebilir, '
+              'ya da betiği uygulamanın yanında veya Hidrocar-Panel klasöründe tutabilirsiniz.';
         });
         return;
       }
 
-      // Linux/RPi için bazı ortamlarda locale/utf-8 ve opencv ile uyumlu IO önemlidir.
       final env = Map<String, String>.from(Platform.environment)
         ..putIfAbsent('PYTHONIOENCODING', () => 'utf-8');
+
+      // ÇOK ÖNEMLİ: çalışma dizinini betiğin klasörü yap
+      final scriptDir = File(scriptPath).parent.path;
 
       _pythonProcess = await Process.start(
         pythonExe,
         [scriptPath],
-        workingDirectory: Directory.current.path,
+        workingDirectory: scriptDir,
         environment: env,
         mode: ProcessStartMode.normal,
       );
 
       _pythonProcess!.stdout.transform(const Utf8Decoder()).listen((output) {
-        // Flask "Running on http://..." yazdığında hazır say
         if (output.contains('Running on')) {
           setState(() => _serverReady = true);
         }
-        // Debug log
-        // print('[PY-OUT] $output');
+        // debug: print('[PY-OUT] $output');
       });
 
       _pythonProcess!.stderr.transform(const Utf8Decoder()).listen((error) {
-        // print('[PY-ERR] $error');
+        // debug: print('[PY-ERR] $error');
         if (error.contains('Error') || error.contains('Exception')) {
           setState(() {
             _errorState = true;
@@ -138,7 +141,6 @@ class _BackCameraState extends State<BackCamera> {
         }
       });
 
-      // Küçük bir bekleme: bazı cihazlarda Flask'ın ayağa kalkması 1-2 sn sürüyor
       await Future.delayed(const Duration(seconds: 2));
       setState(() => _serverReady = true);
     } catch (e) {
@@ -152,6 +154,65 @@ class _BackCameraState extends State<BackCamera> {
   void _restartServer() {
     _pythonProcess?.kill();
     _launchPythonServer();
+  }
+
+  Future<String?> _resolveScriptPath() async {
+    final env = Platform.environment;
+    final cwd = Directory.current.path;
+
+    // Uygulama executable'ının dizini (Flutter Linux'ta güvenli köklerden biri)
+    String? exeDir;
+    try {
+      exeDir = File(Platform.resolvedExecutable).parent.path;
+    } catch (_) {
+      exeDir = null;
+    }
+
+    // 1) Ortam değişkeni ile override
+    final fromEnv = env['CAMERA_PY'];
+    if (fromEnv != null && fromEnv.trim().isNotEmpty && File(fromEnv).existsSync()) {
+      return fromEnv.trim();
+    }
+
+    // 2) Düz aday listesi (mutlak olabilecek yollar)
+    final directCandidates = <String>[
+      if (exeDir != null) p.join(exeDir, 'camera.py'),
+      if (exeDir != null) p.join(exeDir, 'Hidrocar-Panel', 'camera.py'),
+      p.join(cwd, 'camera.py'),
+      p.join(cwd, 'Hidrocar-Panel', 'camera.py'),
+    ];
+    for (final c in directCandidates) {
+      if (File(c).existsSync()) return c;
+    }
+
+    // 3) Yukarı doğru arama (exeDir ve cwd'den)
+    String? upSearch(String start, String rel, {int maxDepth = 3}) {
+      var dir = Directory(start);
+      for (int i = 0; i <= maxDepth; i++) {
+        final candidate = p.join(dir.path, rel);
+        if (File(candidate).existsSync()) return candidate;
+        final parent = dir.parent;
+        if (parent.path == dir.path) break; // root'a geldik
+        dir = parent;
+      }
+      return null;
+    }
+
+    // exeDir kökünden ara
+    if (exeDir != null) {
+      final hit1 = upSearch(exeDir, 'camera.py');
+      if (hit1 != null) return hit1;
+      final hit2 = upSearch(exeDir, p.join('Hidrocar-Panel', 'camera.py'));
+      if (hit2 != null) return hit2;
+    }
+
+    // cwd kökünden ara
+    final hit3 = upSearch(cwd, 'camera.py');
+    if (hit3 != null) return hit3;
+    final hit4 = upSearch(cwd, p.join('Hidrocar-Panel', 'camera.py'));
+    if (hit4 != null) return hit4;
+
+    return null; // bulunamadı
   }
 
   @override
