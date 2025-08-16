@@ -1,22 +1,21 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
 import 'package:hidrocar_panel/splash_screen.dart';
 import 'package:hidrocar_panel/cross_page.dart';
 import 'package:hidrocar_panel/back_camera.dart';
 import 'package:hidrocar_panel/front_camera.dart';
+
 import 'car_data_service.dart';
 import 'car_data.dart';
+import 'serial_service.dart'; // UART dinleyici
 
 // Global key for navigator to be used across the app
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 // Track the currently displayed page
-enum CurrentPage {
-  cross,
-  backCamera,
-  frontCamera
-}
+enum CurrentPage { cross, backCamera, frontCamera }
 
 // Global variable to keep track of the current page
 CurrentPage currentPage = CurrentPage.cross;
@@ -25,58 +24,70 @@ void main() {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersive);
 
-  // Set up services to listen for key events globally
+  // Global keyboard handler (isteğe bağlı)
   ServicesBinding.instance.keyboard.addHandler(_handleGlobalKeyEvent);
 
   runApp(const MyApp());
   _startSimulatedData();
+
+  // >>> SADECE COM11'e bağlan <<<
+  SerialService().start(
+    onLine: onSerialLine,
+    preferredPortName: 'COM11', // <-- Burayı değiştirirsen farklı COM'a bağlanır
+    fallbackToAuto: false,       // false = sadece COM11 dene
+  );
 }
 
-// Global key handler function that works across all screens
+/// UART/Serial'dan gelen her satır buraya gelir
+void onSerialLine(String line) {
+  final msg = line.trim().toLowerCase();
+
+  // Gelen veriyi logla
+  print('UART veri: $msg');
+
+  void go(Widget page, CurrentPage pageId) {
+    if (currentPage == pageId) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      navigatorKey.currentState?.pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => page),
+            (route) => false,
+      );
+      currentPage = pageId;
+    });
+  }
+
+  if (msg == 'button-1') {
+    go(const CrossPage(), CurrentPage.cross);
+  } else if (msg == 'button-2') {
+    go(const BackCamera(), CurrentPage.backCamera);
+  } else if (msg == 'button-3') {
+    go(const FrontCamera(), CurrentPage.frontCamera);
+  }
+}
+
+// Kısayol tuşları (opsiyonel)
 bool _handleGlobalKeyEvent(KeyEvent event) {
   if (event is KeyDownEvent) {
     if (event.logicalKey == LogicalKeyboardKey.f1) {
-      // Only navigate if not already on CrossPage
-      if (currentPage != CurrentPage.cross) {
-        navigatorKey.currentState?.pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const CrossPage()),
-              (route) => false,
-        );
-        currentPage = CurrentPage.cross; // Update current page after navigation
-      }
+      onSerialLine('button-1');
       return true;
     } else if (event.logicalKey == LogicalKeyboardKey.f2) {
-      // Only navigate if not already on BackCamera
-      if (currentPage != CurrentPage.backCamera) {
-        navigatorKey.currentState?.pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const BackCamera()),
-              (route) => false,
-        );
-        currentPage = CurrentPage.backCamera; // Update current page after navigation
-      }
+      onSerialLine('button-2');
       return true;
     } else if (event.logicalKey == LogicalKeyboardKey.f3) {
-      // Only navigate if not already on FrontCamera
-      if (currentPage != CurrentPage.frontCamera) {
-        navigatorKey.currentState?.pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const FrontCamera()),
-              (route) => false,
-        );
-        currentPage = CurrentPage.frontCamera; // Update current page after navigation
-      }
+      onSerialLine('button-3');
       return true;
     }
   }
-  return false; // Let other key events continue to be processed
+  return false;
 }
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      navigatorKey: navigatorKey, // Use the global navigator key
+      navigatorKey: navigatorKey,
       debugShowCheckedModeBanner: false,
       home: const SplashScreen(),
     );
@@ -92,7 +103,6 @@ void _startSimulatedData() {
   int chargingStateCounter = 0;
 
   Timer.periodic(const Duration(milliseconds: 100), (timer) {
-    // Simulate changing speed
     if (speedIncreasing) {
       speed += 0.5;
       if (speed >= 90) speedIncreasing = false;
@@ -101,14 +111,12 @@ void _startSimulatedData() {
       if (speed <= 0) speedIncreasing = true;
     }
 
-    // Switch between charging and discharging every ~30 seconds
     chargingStateCounter++;
     if (chargingStateCounter >= 300) {
       isCharging = !isCharging;
       chargingStateCounter = 0;
     }
 
-    // Update battery percentage based on charging state
     if (isCharging) {
       batteryPercentage = batteryPercentage + 0.05;
       if (batteryPercentage > 100) batteryPercentage = 100;
@@ -117,7 +125,6 @@ void _startSimulatedData() {
       if (batteryPercentage < 0) batteryPercentage = 0;
     }
 
-    // Update car data
     CarDataService().updateData(CarData(
       batteryPercentage: batteryPercentage,
       remainingEnergy: batteryPercentage * 20,
