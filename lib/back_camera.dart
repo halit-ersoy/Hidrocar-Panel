@@ -26,13 +26,57 @@ class _BackCameraState extends State<BackCamera> {
   void initState() {
     super.initState();
     _launchPythonServer();
-    // Start stream activity checker
     _streamActivityTimer = Timer.periodic(const Duration(seconds: 5), (_) {
-      // This will toggle the stream status indicator to show activity
-      setState(() {
-        _streamActive = !_streamActive;
-      });
+      setState(() => _streamActive = !_streamActive);
     });
+  }
+
+  // --- OS'e göre Python yürütücüsünü bulan yardımcı fonksiyon ---
+  Future<String?> _resolvePythonExe() async {
+    final env = Platform.environment;
+    final cwd = Directory.current.path;
+
+    // 1) Ortam değişkeni ile override
+    final fromEnv = env['PYTHON_EXEC'];
+    final candidates = <String>[
+      if (fromEnv != null && fromEnv.trim().isNotEmpty) fromEnv.trim(),
+
+      // 2) Proje içindeki virtualenv yolları
+      // Windows
+      if (Platform.isWindows) p.join(cwd, r'.venv\Scripts\python.exe'),
+      if (Platform.isWindows) p.join(cwd, r'venv\Scripts\python.exe'),
+      // Linux/RPi
+      if (!Platform.isWindows) p.join(cwd, '.venv/bin/python'),
+      if (!Platform.isWindows) p.join(cwd, 'venv/bin/python'),
+
+      // 3) Sistem PATH
+      'python',
+      'python3',
+
+      // 4) Olası tam yollar (Linux/RPi)
+      if (!Platform.isWindows) '/usr/bin/python3',
+      if (!Platform.isWindows) '/usr/local/bin/python3',
+    ];
+
+    Future<bool> _isUsable(String exe) async {
+      try {
+        final res = await Process.run(exe, ['-V'],
+            stdoutEncoding: const Utf8Codec(),
+            stderrEncoding: const Utf8Codec());
+        final out = (res.stdout.toString() + res.stderr.toString()).trim();
+        if (res.exitCode == 0 && out.toLowerCase().contains('python')) {
+          // (İstersen Python >=3.8 kontrolü ekleyebilirsin)
+          return true;
+        }
+      } catch (_) {}
+      return false;
+    }
+
+    for (final exe in candidates) {
+      if (exe.isEmpty) continue;
+      if (await _isUsable(exe)) return exe;
+    }
+    return null;
   }
 
   Future<void> _launchPythonServer() async {
@@ -43,14 +87,14 @@ class _BackCameraState extends State<BackCamera> {
     });
 
     try {
-      final pythonExe =
-          r'C:\Users\halit\AndroidStudioProjects\hidrocar_panel\.venv\Scripts\python.exe';
+      final pythonExe = await _resolvePythonExe();
       final scriptPath = p.join(Directory.current.path, 'camera.py');
 
-      if (!File(pythonExe).existsSync()) {
+      if (pythonExe == null) {
         setState(() {
           _errorState = true;
-          _errorMessage = 'Python yürütülebilir dosyası bulunamadı: $pythonExe';
+          _errorMessage = 'Uygun bir Python yürütücüsü bulunamadı. '
+              'PATH’e python/python3 ekleyin ya da PYTHON_EXEC ortam değişkeniyle yolu belirtin.';
         });
         return;
       }
@@ -63,35 +107,38 @@ class _BackCameraState extends State<BackCamera> {
         return;
       }
 
+      // Linux/RPi için bazı ortamlarda locale/utf-8 ve opencv ile uyumlu IO önemlidir.
+      final env = Map<String, String>.from(Platform.environment)
+        ..putIfAbsent('PYTHONIOENCODING', () => 'utf-8');
+
       _pythonProcess = await Process.start(
         pythonExe,
         [scriptPath],
         workingDirectory: Directory.current.path,
-        environment: {'PYTHONIOENCODING': 'utf-8'},
+        environment: env,
+        mode: ProcessStartMode.normal,
       );
 
-      _pythonProcess!.stdout.transform(const Utf8Decoder()).listen(
-        (output) {
-          print('[PY-OUT] $output');
-          if (output.contains('Running on')) {
-            setState(() => _serverReady = true);
-          }
-        },
-      );
+      _pythonProcess!.stdout.transform(const Utf8Decoder()).listen((output) {
+        // Flask "Running on http://..." yazdığında hazır say
+        if (output.contains('Running on')) {
+          setState(() => _serverReady = true);
+        }
+        // Debug log
+        // print('[PY-OUT] $output');
+      });
 
-      _pythonProcess!.stderr.transform(const Utf8Decoder()).listen(
-        (error) {
-          print('[PY-ERR] $error');
-          if (error.contains('Error') || error.contains('Exception')) {
-            setState(() {
-              _errorState = true;
-              _errorMessage = error;
-            });
-          }
-        },
-      );
+      _pythonProcess!.stderr.transform(const Utf8Decoder()).listen((error) {
+        // print('[PY-ERR] $error');
+        if (error.contains('Error') || error.contains('Exception')) {
+          setState(() {
+            _errorState = true;
+            _errorMessage = error;
+          });
+        }
+      });
 
-      // Wait for server to start
+      // Küçük bir bekleme: bazı cihazlarda Flask'ın ayağa kalkması 1-2 sn sürüyor
       await Future.delayed(const Duration(seconds: 2));
       setState(() => _serverReady = true);
     } catch (e) {
@@ -117,14 +164,15 @@ class _BackCameraState extends State<BackCamera> {
 
   @override
   Widget build(BuildContext context) {
-    final streamUrl = 'http://127.0.0.1:5000/video';
+    // İstek her zaman 0 ile gitsin (Raspberry Pi’de arka/ön seçmek istersen ileride bu değeri değiştirebilirsin)
+    const int cameraIndex = 0;
+    final streamUrl = 'http://127.0.0.1:5000/video?camera=$cameraIndex';
 
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // Camera Stream
           if (_serverReady && !_errorState)
             Positioned.fill(
               child: Mjpeg(
@@ -133,7 +181,7 @@ class _BackCameraState extends State<BackCamera> {
                 error: (context, error, stack) {
                   return Center(
                     child:
-                        _buildErrorDisplay('Bağlantı hatası', error.toString()),
+                    _buildErrorDisplay('Bağlantı hatası', error.toString()),
                   );
                 },
                 loading: (context) {
@@ -169,11 +217,9 @@ class _BackCameraState extends State<BackCamera> {
               ),
             ),
 
-          // Error Display
           if (_errorState)
             _buildErrorDisplay('Kamera Hatası', _errorMessage, canRetry: true),
 
-          // Server initializing display
           if (!_serverReady && !_errorState)
             Container(
               color: Colors.black,
@@ -211,7 +257,7 @@ class _BackCameraState extends State<BackCamera> {
               ),
             ),
 
-          // Top bar with title and status
+          // Üst bar vs... (kalan kısımlar aynı)
           Positioned(
             top: 0,
             left: 0,
@@ -242,7 +288,6 @@ class _BackCameraState extends State<BackCamera> {
                     ),
                   ),
                   const Spacer(),
-                  // Status indicator
                   if (_serverReady && !_errorState)
                     AnimatedContainer(
                       duration: const Duration(milliseconds: 500),
@@ -262,16 +307,10 @@ class _BackCameraState extends State<BackCamera> {
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.wifi,
-                            color: _streamActive
-                                ? Colors.green
-                                : Colors.green.withOpacity(0.7),
-                            size: 16,
-                          ),
-                          const SizedBox(width: 6),
-                          const Text(
+                        children: const [
+                          Icon(Icons.wifi, color: Colors.green, size: 16),
+                          SizedBox(width: 6),
+                          Text(
                             'Bağlı',
                             style: TextStyle(
                               color: Colors.green,
@@ -287,7 +326,7 @@ class _BackCameraState extends State<BackCamera> {
             ),
           ),
 
-          // Bottom controls overlay
+          // Alt overlay ve butonlar (aynı)
           Positioned(
             bottom: 0,
             left: 0,
@@ -307,18 +346,14 @@ class _BackCameraState extends State<BackCamera> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Camera info
                   if (_serverReady && !_errorState)
                     const Padding(
                       padding: EdgeInsets.only(bottom: 15),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(
-                            Icons.info_outline,
-                            color: Colors.white70,
-                            size: 16,
-                          ),
+                          Icon(Icons.info_outline,
+                              color: Colors.white70, size: 16),
                           SizedBox(width: 8),
                           Text(
                             'HD Kamera (1280x720)',
@@ -330,8 +365,6 @@ class _BackCameraState extends State<BackCamera> {
                         ],
                       ),
                     ),
-
-                  // Function key navigation
                   Container(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 16, vertical: 10),
@@ -375,11 +408,7 @@ class _BackCameraState extends State<BackCamera> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(
-            Icons.error_outline,
-            color: Colors.red,
-            size: 70,
-          ),
+          const Icon(Icons.error_outline, color: Colors.red, size: 70),
           const SizedBox(height: 20),
           Text(
             title,
@@ -408,7 +437,7 @@ class _BackCameraState extends State<BackCamera> {
                 backgroundColor: Colors.blue,
                 foregroundColor: Colors.white,
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                 textStyle: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,

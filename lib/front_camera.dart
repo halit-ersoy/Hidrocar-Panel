@@ -25,13 +25,59 @@ class _FrontCameraState extends State<FrontCamera> {
   void initState() {
     super.initState();
     _launchPythonServer();
-    // Start stream activity checker
     _streamActivityTimer = Timer.periodic(const Duration(seconds: 5), (_) {
-      // This will toggle the stream status indicator to show activity
-      setState(() {
-        _streamActive = !_streamActive;
-      });
+      setState(() => _streamActive = !_streamActive);
     });
+  }
+
+  // --- OS'e göre Python yürütücüsünü bulan yardımcı fonksiyon ---
+  Future<String?> _resolvePythonExe() async {
+    final env = Platform.environment;
+    final cwd = Directory.current.path;
+
+    // 1) Ortam değişkeni ile override
+    final fromEnv = env['PYTHON_EXEC'];
+
+    final candidates = <String>[
+      if (fromEnv != null && fromEnv.trim().isNotEmpty) fromEnv.trim(),
+
+      // 2) Proje içindeki virtualenv yolları
+      // Windows
+      if (Platform.isWindows) p.join(cwd, r'.venv\Scripts\python.exe'),
+      if (Platform.isWindows) p.join(cwd, r'venv\Scripts\python.exe'),
+      // Linux/RPi
+      if (!Platform.isWindows) p.join(cwd, '.venv/bin/python'),
+      if (!Platform.isWindows) p.join(cwd, 'venv/bin/python'),
+
+      // 3) Sistem PATH
+      'python',
+      'python3',
+
+      // 4) Olası tam yollar (Linux/RPi)
+      if (!Platform.isWindows) '/usr/bin/python3',
+      if (!Platform.isWindows) '/usr/local/bin/python3',
+    ];
+
+    Future<bool> _isUsable(String exe) async {
+      try {
+        final res = await Process.run(
+          exe,
+          ['-V'],
+          stdoutEncoding: const Utf8Codec(),
+          stderrEncoding: const Utf8Codec(),
+        );
+        final out = (res.stdout.toString() + res.stderr.toString()).trim();
+        return res.exitCode == 0 && out.toLowerCase().contains('python');
+      } catch (_) {
+        return false;
+      }
+    }
+
+    for (final exe in candidates) {
+      if (exe.isEmpty) continue;
+      if (await _isUsable(exe)) return exe;
+    }
+    return null;
   }
 
   Future<void> _launchPythonServer() async {
@@ -42,14 +88,15 @@ class _FrontCameraState extends State<FrontCamera> {
     });
 
     try {
-      final pythonExe =
-          r'C:\Users\halit\AndroidStudioProjects\hidrocar_panel\.venv\Scripts\python.exe';
+      final pythonExe = await _resolvePythonExe();
       final scriptPath = p.join(Directory.current.path, 'camera.py');
 
-      if (!File(pythonExe).existsSync()) {
+      if (pythonExe == null) {
         setState(() {
           _errorState = true;
-          _errorMessage = 'Python yürütülebilir dosyası bulunamadı: $pythonExe';
+          _errorMessage =
+          'Uygun bir Python yürütücüsü bulunamadı. PATH’e python/python3 ekleyin '
+              'ya da PYTHON_EXEC ortam değişkeniyle yolu belirtin.';
         });
         return;
       }
@@ -62,38 +109,36 @@ class _FrontCameraState extends State<FrontCamera> {
         return;
       }
 
+      final env = Map<String, String>.from(Platform.environment)
+        ..putIfAbsent('PYTHONIOENCODING', () => 'utf-8');
+
       _pythonProcess = await Process.start(
         pythonExe,
         [scriptPath],
         workingDirectory: Directory.current.path,
-        environment: {'PYTHONIOENCODING': 'utf-8'},
+        environment: env,
+        mode: ProcessStartMode.normal,
       );
 
-      _pythonProcess!.stdout.transform(const Utf8Decoder()).listen(
-            (output) {
-          print('[PY-OUT] $output');
-          if (output.contains('Running on')) {
-            setState(() => _serverReady = true);
-          }
-        },
-      );
+      _pythonProcess!.stdout.transform(const Utf8Decoder()).listen((output) {
+        // debug: print('[PY-OUT] $output');
+        if (output.contains('Running on')) {
+          setState(() => _serverReady = true);
+        }
+      });
 
-      _pythonProcess!.stderr.transform(const Utf8Decoder()).listen(
-            (error) {
-          print('[PY-ERR] $error');
-          if (error.contains('Error') || error.contains('Exception')) {
-            setState(() {
-              _errorState = true;
-              _errorMessage = error;
-            });
-          }
-        },
-      );
+      _pythonProcess!.stderr.transform(const Utf8Decoder()).listen((error) {
+        // debug: print('[PY-ERR] $error');
+        if (error.contains('Error') || error.contains('Exception')) {
+          setState(() {
+            _errorState = true;
+            _errorMessage = error;
+          });
+        }
+      });
 
-      // Wait for server to start
       await Future.delayed(const Duration(seconds: 2));
       setState(() => _serverReady = true);
-
     } catch (e) {
       setState(() {
         _errorState = true;
@@ -117,7 +162,9 @@ class _FrontCameraState extends State<FrontCamera> {
 
   @override
   Widget build(BuildContext context) {
-    final streamUrl = 'http://127.0.0.1:5000/video';
+    // İstek her zaman 0 ile gitsin
+    const int cameraIndex = 0;
+    final streamUrl = 'http://127.0.0.1:5000/video?camera=$cameraIndex';
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -132,7 +179,8 @@ class _FrontCameraState extends State<FrontCamera> {
                 stream: streamUrl,
                 error: (context, error, stack) {
                   return Center(
-                    child: _buildErrorDisplay('Yayın bağlantı hatası', error.toString()),
+                    child: _buildErrorDisplay(
+                        'Yayın bağlantı hatası', error.toString()),
                   );
                 },
                 loading: (context) {
@@ -241,16 +289,20 @@ class _FrontCameraState extends State<FrontCamera> {
                     ),
                   ),
                   const Spacer(),
-                  // Status indicator
                   if (_serverReady && !_errorState)
                     AnimatedContainer(
                       duration: const Duration(milliseconds: 500),
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
-                        color: _streamActive ? Colors.green.withOpacity(0.3) : Colors.green.withOpacity(0.1),
+                        color: _streamActive
+                            ? Colors.green.withOpacity(0.3)
+                            : Colors.green.withOpacity(0.1),
                         borderRadius: BorderRadius.circular(20),
                         border: Border.all(
-                          color: _streamActive ? Colors.green : Colors.green.withOpacity(0.5),
+                          color: _streamActive
+                              ? Colors.green
+                              : Colors.green.withOpacity(0.5),
                           width: 1.5,
                         ),
                       ),
@@ -259,7 +311,9 @@ class _FrontCameraState extends State<FrontCamera> {
                         children: [
                           Icon(
                             Icons.wifi,
-                            color: _streamActive ? Colors.green : Colors.green.withOpacity(0.7),
+                            color: _streamActive
+                                ? Colors.green
+                                : Colors.green.withOpacity(0.7),
                             size: 16,
                           ),
                           const SizedBox(width: 6),
@@ -299,7 +353,6 @@ class _FrontCameraState extends State<FrontCamera> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Camera info
                   if (_serverReady && !_errorState)
                     const Padding(
                       padding: EdgeInsets.only(bottom: 15),
@@ -325,11 +378,13 @@ class _FrontCameraState extends State<FrontCamera> {
 
                   // Function key navigation
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 10),
                     decoration: BoxDecoration(
                       color: Colors.black.withOpacity(0.6),
                       borderRadius: BorderRadius.circular(30),
-                      border: Border.all(color: Colors.blue.withOpacity(0.3), width: 1),
+                      border: Border.all(
+                          color: Colors.blue.withOpacity(0.3), width: 1),
                     ),
                     child: const Row(
                       mainAxisSize: MainAxisSize.min,
@@ -355,7 +410,8 @@ class _FrontCameraState extends State<FrontCamera> {
     );
   }
 
-  Widget _buildErrorDisplay(String title, String message, {bool canRetry = false}) {
+  Widget _buildErrorDisplay(String title, String message,
+      {bool canRetry = false}) {
     return Container(
       color: Colors.black,
       padding: const EdgeInsets.symmetric(horizontal: 30),
@@ -394,7 +450,8 @@ class _FrontCameraState extends State<FrontCamera> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.blue,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                padding:
+                const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                 textStyle: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
