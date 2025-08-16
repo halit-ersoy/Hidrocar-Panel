@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:math';
-import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'cross_page.dart';
 
@@ -17,7 +16,6 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
   late Animation<double> _scaleAnimation;
   late Animation<double> _rotateAnimation;
   late Animation<double> _pulseAnimation;
-  late AudioPlayer _audioPlayer;
 
   bool _showStatusChecks = false;
   bool _showBootComplete = false;
@@ -36,8 +34,6 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
   @override
   void initState() {
     super.initState();
-    _audioPlayer = AudioPlayer();
-    _playStartupSound();
 
     _controller = AnimationController(
       duration: const Duration(milliseconds: 3000),
@@ -124,17 +120,8 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
     );
   }
 
-  Future<void> _playStartupSound() async {
-    try {
-      await _audioPlayer.play(AssetSource('sounds/start.mp3'));
-    } catch (e) {
-      debugPrint('Error playing startup sound: $e');
-    }
-  }
-
   @override
   void dispose() {
-    _audioPlayer.dispose(); // Dispose the audio player
     _controller.dispose();
     super.dispose();
   }
