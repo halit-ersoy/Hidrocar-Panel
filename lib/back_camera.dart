@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter_mjpeg/flutter_mjpeg.dart';
 import 'package:path/path.dart' as p;
+import 'function_key.dart';
 
 class BackCamera extends StatefulWidget {
   const BackCamera({super.key});
@@ -15,195 +15,134 @@ class BackCamera extends StatefulWidget {
 
 class _BackCameraState extends State<BackCamera> {
   Process? _pythonProcess;
-  StreamSubscription<String>? _outSub;
-  StreamSubscription<String>? _errSub;
-
   bool _serverReady = false;
   bool _streamActive = false;
   bool _errorState = false;
   String _errorMessage = '';
-
+  Timer? _connectionChecker;
   Timer? _streamActivityTimer;
-
-  // ---- Sabitler (gerekirse değiştir) ----
-  static const String _camIndex = '1';   // arka kamera = 1
-  static const String _port     = '5001';
-  static const String _script   = 'camera.py';
 
   @override
   void initState() {
     super.initState();
     _launchPythonServer();
-
     _streamActivityTimer = Timer.periodic(const Duration(seconds: 5), (_) {
-      _safeSetState(() => _streamActive = !_streamActive);
+      setState(() => _streamActive = !_streamActive);
     });
   }
 
-  void _safeSetState(VoidCallback fn) {
-    if (!mounted) return;
-    if (SchedulerBinding.instance.schedulerPhase == SchedulerPhase.persistentCallbacks) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) setState(fn);
-      });
-    } else {
-      setState(fn);
-    }
-  }
+  // --- OS'e göre Python yürütücüsünü bulan yardımcı fonksiyon ---
+  Future<String?> _resolvePythonExe() async {
+    final env = Platform.environment;
+    final cwd = Directory.current.path;
 
-  // ---- Python çözümleme (Windows + Linux) ----
-  Future<String?> _resolvePythonCmd() async {
-    // 0) Kullanıcı override
-    final envPy = Platform.environment['HYDROCAR_PY'];
-    if (envPy != null && envPy.isNotEmpty && File(envPy).existsSync()) return envPy;
+    // 1) Ortam değişkeni ile override
+    final fromEnv = env['PYTHON_EXEC'];
+    final candidates = <String>[
+      if (fromEnv != null && fromEnv.trim().isNotEmpty) fromEnv.trim(),
 
-    if (Platform.isWindows) {
-      // 1) py launcher
+      // 2) Proje içindeki virtualenv yolları
+      // Windows
+      if (Platform.isWindows) p.join(cwd, r'.venv\Scripts\python.exe'),
+      if (Platform.isWindows) p.join(cwd, r'venv\Scripts\python.exe'),
+      // Linux/RPi
+      if (!Platform.isWindows) p.join(cwd, '.venv/bin/python'),
+      if (!Platform.isWindows) p.join(cwd, 'venv/bin/python'),
+
+      // 3) Sistem PATH
+      'python',
+      'python3',
+
+      // 4) Olası tam yollar (Linux/RPi)
+      if (!Platform.isWindows) '/usr/bin/python3',
+      if (!Platform.isWindows) '/usr/local/bin/python3',
+    ];
+
+    Future<bool> _isUsable(String exe) async {
       try {
-        final r = await Process.run('py', ['-3', '--version'], runInShell: true);
-        if (r.exitCode == 0 && (r.stdout.toString() + r.stderr.toString()).contains('Python')) {
-          return 'py'; // 'py -3 script.py'
+        final res = await Process.run(exe, ['-V'],
+            stdoutEncoding: const Utf8Codec(),
+            stderrEncoding: const Utf8Codec());
+        final out = (res.stdout.toString() + res.stderr.toString()).trim();
+        if (res.exitCode == 0 && out.toLowerCase().contains('python')) {
+          // (İstersen Python >=3.8 kontrolü ekleyebilirsin)
+          return true;
         }
       } catch (_) {}
-
-      // 2) yaygın venv yolları (proje kökünde .venv/venv)
-      final guesses = <String>[
-        p.join(Directory.current.path, '.venv', 'Scripts', 'python.exe'),
-        p.join(Directory.current.path, 'venv',  'Scripts', 'python.exe'),
-      ];
-      for (final g in guesses) {
-        if (File(g).existsSync()) return g;
-      }
-
-      // 3) PATH
-      for (final cmd in ['python', 'python.exe']) {
-        try {
-          final r = await Process.run(cmd, ['--version'], runInShell: true);
-          if (r.exitCode == 0) return cmd;
-        } catch (_) {}
-      }
-    } else {
-      // Linux/macOS
-      for (final cmd in ['python3', 'python']) {
-        try {
-          final r = await Process.run(cmd, ['--version']);
-          if (r.exitCode == 0) return cmd;
-        } catch (_) {}
-      }
-      for (final cmd in ['/usr/bin/python3', '/usr/local/bin/python3']) {
-        if (File(cmd).existsSync()) return cmd;
-      }
+      return false;
     }
-    return null;
-  }
 
-  String? _resolveScriptPath() {
-    // 1) çalışma dizini
-    final c1 = p.join(Directory.current.path, _script);
-    if (File(c1).existsSync()) return c1;
-
-    // 2) çalıştırılabilirin klasörü (desktop build’lerde faydalı)
-    try {
-      final exeDir = File(Platform.resolvedExecutable).parent.path;
-      final c2 = p.join(exeDir, _script);
-      if (File(c2).existsSync()) return c2;
-    } catch (_) {}
-
-    // 3) parent (bazı debug koşullarında)
-    final c3 = p.join(Directory.current.parent.path, _script);
-    if (File(c3).existsSync()) return c3;
-
+    for (final exe in candidates) {
+      if (exe.isEmpty) continue;
+      if (await _isUsable(exe)) return exe;
+    }
     return null;
   }
 
   Future<void> _launchPythonServer() async {
-    _safeSetState(() {
+    setState(() {
       _serverReady = false;
       _errorState = false;
       _errorMessage = '';
     });
 
     try {
-      final pythonCmd = await _resolvePythonCmd();
-      final scriptPath = _resolveScriptPath();
+      final pythonExe = await _resolvePythonExe();
+      final scriptPath = p.join(Directory.current.path, 'camera.py');
 
-      if (pythonCmd == null) {
-        _safeSetState(() {
+      if (pythonExe == null) {
+        setState(() {
           _errorState = true;
-          _errorMessage =
-          'Uygun Python bulunamadı.\n'
-              'Windows: py -3 / python.exe, Linux: python3\n'
-              'Gerekirse HYDROCAR_PY ile yolu belirt.';
-        });
-        return;
-      }
-      if (scriptPath == null) {
-        _safeSetState(() {
-          _errorState = true;
-          _errorMessage = 'Python betiği bulunamadı: $_script\n'
-              'camera.py dosyasını çalışma dizinine koy.';
+          _errorMessage = 'Uygun bir Python yürütücüsü bulunamadı. '
+              'PATH’e python/python3 ekleyin ya da PYTHON_EXEC ortam değişkeniyle yolu belirtin.';
         });
         return;
       }
 
-      // Windows’ta py launcher ise '-3' ekleyelim
-      final args = (Platform.isWindows && p.basename(pythonCmd).toLowerCase() == 'py')
-          ? ['-3', scriptPath, _camIndex, _port]
-          : [scriptPath, _camIndex, _port];
+      if (!File(scriptPath).existsSync()) {
+        setState(() {
+          _errorState = true;
+          _errorMessage = 'Python betiği bulunamadı: $scriptPath';
+        });
+        return;
+      }
 
-      final proc = await Process.start(
-        pythonCmd,
-        args,
+      // Linux/RPi için bazı ortamlarda locale/utf-8 ve opencv ile uyumlu IO önemlidir.
+      final env = Map<String, String>.from(Platform.environment)
+        ..putIfAbsent('PYTHONIOENCODING', () => 'utf-8');
+
+      _pythonProcess = await Process.start(
+        pythonExe,
+        [scriptPath],
         workingDirectory: Directory.current.path,
-        environment: {
-          'PYTHONIOENCODING': 'utf-8',
-          'PYTHONUNBUFFERED': '1',
-        },
-        runInShell: Platform.isWindows, // py launcher için gerekli
+        environment: env,
+        mode: ProcessStartMode.normal,
       );
 
-      if (!mounted) {
-        proc.kill(ProcessSignal.sigkill);
-        return;
-      }
-
-      _pythonProcess = proc;
-
-      _outSub = proc.stdout
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())
-          .listen((line) {
-        // ignore: avoid_print
-        print('[PY-OUT] $line');
-        if (!mounted) return;
-        if (line.contains('Running on') || line.contains(' * Running on')) {
-          _safeSetState(() => _serverReady = true);
+      _pythonProcess!.stdout.transform(const Utf8Decoder()).listen((output) {
+        // Flask "Running on http://..." yazdığında hazır say
+        if (output.contains('Running on')) {
+          setState(() => _serverReady = true);
         }
+        // Debug log
+        // print('[PY-OUT] $output');
       });
 
-      _errSub = proc.stderr
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())
-          .listen((line) {
-        // ignore: avoid_print
-        print('[PY-ERR] $line');
-        if (!mounted) return;
-        final l = line.toLowerCase();
-        if (l.contains('error') || l.contains('exception') || l.contains('traceback')) {
-          _safeSetState(() {
+      _pythonProcess!.stderr.transform(const Utf8Decoder()).listen((error) {
+        // print('[PY-ERR] $error');
+        if (error.contains('Error') || error.contains('Exception')) {
+          setState(() {
             _errorState = true;
-            _errorMessage = line;
+            _errorMessage = error;
           });
         }
       });
 
-      // ufak bekleme
+      // Küçük bir bekleme: bazı cihazlarda Flask'ın ayağa kalkması 1-2 sn sürüyor
       await Future.delayed(const Duration(seconds: 2));
-      if (!mounted) return;
-      _safeSetState(() => _serverReady = true);
+      setState(() => _serverReady = true);
     } catch (e) {
-      if (!mounted) return;
-      _safeSetState(() {
+      setState(() {
         _errorState = true;
         _errorMessage = 'Kamera başlatılırken hata oluştu: $e';
       });
@@ -211,31 +150,23 @@ class _BackCameraState extends State<BackCamera> {
   }
 
   void _restartServer() {
-    _pythonProcess?.kill(ProcessSignal.sigkill);
-    _outSub?.cancel();
-    _errSub?.cancel();
+    _pythonProcess?.kill();
     _launchPythonServer();
   }
 
   @override
   void dispose() {
+    _pythonProcess?.kill();
+    _connectionChecker?.cancel();
     _streamActivityTimer?.cancel();
-    _streamActivityTimer = null;
-
-    _outSub?.cancel();
-    _errSub?.cancel();
-    _outSub = null;
-    _errSub = null;
-
-    _pythonProcess?.kill(ProcessSignal.sigkill);
-    _pythonProcess = null;
-
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final streamUrl = 'http://127.0.0.1:$_port/video';
+    // İstek her zaman 0 ile gitsin (Raspberry Pi’de arka/ön seçmek istersen ileride bu değeri değiştirebilirsin)
+    const int cameraIndex = 0;
+    final streamUrl = 'http://127.0.0.1:5000/video?camera=$cameraIndex';
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -247,36 +178,41 @@ class _BackCameraState extends State<BackCamera> {
               child: Mjpeg(
                 isLive: true,
                 stream: streamUrl,
-                error: (context, error, stack) => Center(
-                  child: _buildErrorDisplay('Bağlantı hatası', error.toString()),
-                ),
-                loading: (context) => Container(
-                  color: Colors.black,
-                  child: const Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SizedBox(
-                          width: 60,
-                          height: 60,
-                          child: CircularProgressIndicator(
-                            color: Colors.blue,
-                            strokeWidth: 3,
+                error: (context, error, stack) {
+                  return Center(
+                    child:
+                    _buildErrorDisplay('Bağlantı hatası', error.toString()),
+                  );
+                },
+                loading: (context) {
+                  return Container(
+                    color: Colors.black,
+                    child: const Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: 60,
+                            height: 60,
+                            child: CircularProgressIndicator(
+                              color: Colors.blue,
+                              strokeWidth: 3,
+                            ),
                           ),
-                        ),
-                        SizedBox(height: 20),
-                        Text(
-                          'Kamera başlatılıyor...',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.w500,
+                          SizedBox(height: 20),
+                          Text(
+                            'Kamera başlatılıyor...',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                ),
+                  );
+                },
                 fit: BoxFit.contain,
               ),
             ),
@@ -321,6 +257,7 @@ class _BackCameraState extends State<BackCamera> {
               ),
             ),
 
+          // Üst bar vs... (kalan kısımlar aynı)
           Positioned(
             top: 0,
             left: 0,
@@ -354,25 +291,26 @@ class _BackCameraState extends State<BackCamera> {
                   if (_serverReady && !_errorState)
                     AnimatedContainer(
                       duration: const Duration(milliseconds: 500),
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
-                        color: _streamActive ? Colors.green.withOpacity(0.3) : Colors.green.withOpacity(0.1),
+                        color: _streamActive
+                            ? Colors.green.withOpacity(0.3)
+                            : Colors.green.withOpacity(0.1),
                         borderRadius: BorderRadius.circular(20),
                         border: Border.all(
-                          color: _streamActive ? Colors.green : Colors.green.withOpacity(0.5),
+                          color: _streamActive
+                              ? Colors.green
+                              : Colors.green.withOpacity(0.5),
                           width: 1.5,
                         ),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.wifi,
-                            color: _streamActive ? Colors.green : Colors.green.withOpacity(0.7),
-                            size: 16,
-                          ),
-                          const SizedBox(width: 6),
-                          const Text(
+                        children: const [
+                          Icon(Icons.wifi, color: Colors.green, size: 16),
+                          SizedBox(width: 6),
+                          Text(
                             'Bağlı',
                             style: TextStyle(
                               color: Colors.green,
@@ -388,6 +326,7 @@ class _BackCameraState extends State<BackCamera> {
             ),
           ),
 
+          // Alt overlay ve butonlar (aynı)
           Positioned(
             bottom: 0,
             left: 0,
@@ -413,28 +352,42 @@ class _BackCameraState extends State<BackCamera> {
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.info_outline, color: Colors.white70, size: 16),
+                          Icon(Icons.info_outline,
+                              color: Colors.white70, size: 16),
                           SizedBox(width: 8),
-                          Text('HD Kamera (1280x720)',
-                              style: TextStyle(color: Colors.white70, fontSize: 14)),
+                          Text(
+                            'HD Kamera (1280x720)',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 14,
+                            ),
+                          ),
                         ],
                       ),
                     ),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 10),
                     decoration: BoxDecoration(
                       color: Colors.black.withOpacity(0.6),
                       borderRadius: BorderRadius.circular(30),
-                      border: Border.all(color: Colors.blue.withOpacity(0.3), width: 1),
+                      border: Border.all(
+                          color: Colors.blue.withOpacity(0.3), width: 1),
                     ),
                     child: const Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        _FunctionKey(label: 'F1', description: 'Ana Ekran'),
+                        FunctionKey(label: 'F1', description: 'Ana Ekran'),
                         SizedBox(width: 16),
-                        _FunctionKey(label: 'F2', description: 'Arka Kamera', isActive: true),
+                        FunctionKey(
+                            label: 'F2',
+                            description: 'Arka Kamera',
+                            isActive: true),
                         SizedBox(width: 16),
-                        _FunctionKey(label: 'F3', description: 'Ön Kamera'),
+                        FunctionKey(
+                          label: 'F3',
+                          description: 'Ön Kamera',
+                        ),
                       ],
                     ),
                   ),
@@ -447,7 +400,8 @@ class _BackCameraState extends State<BackCamera> {
     );
   }
 
-  Widget _buildErrorDisplay(String title, String message, {bool canRetry = false}) {
+  Widget _buildErrorDisplay(String title, String message,
+      {bool canRetry = false}) {
     return Container(
       color: Colors.black,
       padding: const EdgeInsets.symmetric(horizontal: 30),
@@ -456,10 +410,23 @@ class _BackCameraState extends State<BackCamera> {
         children: [
           const Icon(Icons.error_outline, color: Colors.red, size: 70),
           const SizedBox(height: 20),
-          Text(title,
-              style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+          Text(
+            title,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
           const SizedBox(height: 15),
-          Text(message, style: const TextStyle(color: Colors.white70, fontSize: 16), textAlign: TextAlign.center),
+          Text(
+            message,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 16,
+            ),
+            textAlign: TextAlign.center,
+          ),
           if (canRetry) ...[
             const SizedBox(height: 30),
             ElevatedButton.icon(
@@ -469,59 +436,17 @@ class _BackCameraState extends State<BackCamera> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.blue,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                padding:
+                const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                textStyle: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
           ],
         ],
       ),
-    );
-  }
-}
-
-// Aynı dosyada kullanalım; istersen ayrı component yap.
-class _FunctionKey extends StatelessWidget {
-  final String label;
-  final String description;
-  final bool isActive;
-
-  const _FunctionKey({
-    required this.label,
-    required this.description,
-    this.isActive = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: isActive ? Colors.blue : Colors.grey.shade800,
-            borderRadius: BorderRadius.circular(4),
-            boxShadow:
-            isActive ? [BoxShadow(color: Colors.blue.withOpacity(0.4), blurRadius: 8, spreadRadius: 1)] : null,
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
-            ),
-          ),
-        ),
-        const SizedBox(width: 6),
-        Text(
-          description,
-          style: TextStyle(
-            color: isActive ? Colors.white : Colors.white70,
-            fontWeight: isActive ? FontWeight.w500 : FontWeight.normal,
-          ),
-        ),
-      ],
     );
   }
 }
