@@ -23,35 +23,40 @@ CurrentPage currentPage = CurrentPage.cross;
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Pencere ayarları (Windows & Linux)
+  // Window Manager init
   await windowManager.ensureInitialized();
+
+  // macOS için başlık çubuğunu gizle; diğer platformlarda yok sayılır.
   const windowOptions = WindowOptions(
-    titleBarStyle: TitleBarStyle.hidden, // başlık çubuğu yok
-    fullScreen: true,                    // tam ekran
+    titleBarStyle: TitleBarStyle.hidden,
     backgroundColor: Colors.black,
-    skipTaskbar: false,
-    windowButtonVisibility: false,       // min/max/close gizle
   );
+
   await windowManager.waitUntilReadyToShow(windowOptions, () async {
-    await windowManager.setFullScreen(true);
-    await windowManager.setResizable(false);   // yeniden boyutlandırma kapalı
-    await windowManager.setPreventClose(true); // kapatma engelli
+    // Windows/Linux: çerçevesiz hale getir (butonlar yok)
+    await windowManager.setAsFrameless();
+
+    // Genel pencere davranışı
+    await windowManager.setResizable(false);
+    await windowManager.setPreventClose(true);
+    await windowManager.setFullScreen(true); // tam ekran
     await windowManager.show();
     await windowManager.focus();
   });
-  // Kapatma isteği gelirse tamamen yok say (istersen diyalog koyabilirsin)
+
+  // (İsteğe bağlı) Kapatma isteğini tamamen engelle
   windowManager.addListener(_WndListener());
 
-  // Sistem UI (örn. imleç/menü çubukları) gizli
+  // Sistem UI çubuklarını yok et
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersive);
 
-  // Global klavye kısayolları (opsiyonel)
+  // Global kısayollar (opsiyonel)
   ServicesBinding.instance.keyboard.addHandler(_handleGlobalKeyEvent);
 
   // Seri portu başlat
   _startSerialByPlatform();
 
-  // UI canlı kalsın diye simülasyon
+  // Telemetri simülasyonu
   _startSimulatedData();
 
   runApp(const MyApp());
@@ -61,11 +66,9 @@ Future<void> main() async {
 class _WndListener with WindowListener {
   @override
   void onWindowClose() async {
+    // Tamamen engelle (istersen burada onay diyaloğu gösterebilirsin)
     final prevent = await windowManager.isPreventClose();
-    if (prevent) {
-      // Tamamen engelle (istersen burada onay penceresi aç)
-      return;
-    }
+    if (prevent) return;
   }
 }
 
@@ -82,7 +85,6 @@ void _startSerialByPlatform() {
     if (envPort != null && envPort.isNotEmpty && ports.contains(envPort)) {
       preferred = envPort;
     } else {
-      // RPi ve Linux’ta en yaygın yollar
       preferred = ports.firstWhere(
             (p) => p.contains('/dev/serial0'),
         orElse: () => ports.firstWhere(
