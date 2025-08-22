@@ -10,6 +10,7 @@ import 'package:hidrocar_panel/front_camera.dart';
 
 import 'car_data_service.dart';
 import 'car_data.dart';
+import 'package:flutter_libserialport/flutter_libserialport.dart';
 import 'serial_service.dart'; // UART/Serial dinleyici
 
 // Global navigator key
@@ -37,32 +38,54 @@ void main() {
 
 /// Platforma göre doğru seri portu seç ve dinlemeyi başlatır.
 void _startSerialByPlatform() {
-  // Ortam değişkenleri ile override imkanı (opsiyonel)
-  // Linux: export SERIAL_PORT=/dev/ttyAMA0
-  // Win  : setx SERIAL_PORT COM7
   final env = Platform.environment;
   final envPort = env['SERIAL_PORT'];
 
   if (Platform.isLinux) {
-    // Raspberry Pi tarafı (UART)
-    final preferred = envPort?.isNotEmpty == true ? envPort! : '/dev/serial0';
+    // Mevcut portları al ve logla (teşhis için çok faydalı)
+    final ports = SerialPort.availablePorts;
+    debugPrint('availablePorts: $ports');
+
+    // 1) ENV ile gelmişse ve listede varsa onu kullan
+    String? preferred;
+    if (envPort != null && envPort.isNotEmpty && ports.contains(envPort)) {
+      preferred = envPort;
+    } else {
+      // 2) Yaygın Linux/RPi isimleri arasından seç
+      preferred = ports.firstWhere(
+            (p) => p.contains('/dev/serial0'),
+        orElse: () => ports.firstWhere(
+              (p) => p.contains('/dev/ttyAMA'),
+          orElse: () => ports.firstWhere(
+                (p) => p.contains('/dev/ttyS'),
+            orElse: () => ports.firstWhere(
+                  (p) => p.contains('/dev/ttyUSB'),
+              orElse: () => '', // bulunamadı -> otomatiğe bırak
+            ),
+          ),
+        ),
+      );
+      if (preferred.isEmpty) preferred = null;
+    }
+
     SerialService().start(
       onLine: onSerialLine,
-      preferredPortName: preferred,
-      // true -> /dev/serial0 bulunamazsa servisin kendi auto-scan’ine düşsün
-      fallbackToAuto: true,
+      preferredPortName: preferred ?? '', // yoksa boş ver
+      fallbackToAuto: true,               // auto-scan devreye girer
     );
   } else if (Platform.isWindows) {
-    // Windows tarafı (USB/COM)
-    final preferred = envPort?.isNotEmpty == true ? envPort! : 'COM11';
+    final ports = SerialPort.availablePorts;
+    debugPrint('availablePorts: $ports');
+
+    String? preferred = envPort?.isNotEmpty == true ? envPort : null;
+    preferred ??= ports.contains('COM11') ? 'COM11' : null;
+
     SerialService().start(
       onLine: onSerialLine,
-      preferredPortName: preferred,
-      // true -> COM11 yoksa servisin auto-scan’i devreye girsin (örn. COM3, COM4…)
+      preferredPortName: preferred ?? '',
       fallbackToAuto: true,
     );
   } else {
-    // Diğer platformlarda otomatik tarama
     SerialService().start(
       onLine: onSerialLine,
       preferredPortName: envPort ?? '',
