@@ -1,7 +1,9 @@
 import 'dart:async';
-import 'dart:io' show Platform; // <-- platform tespiti
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:window_manager/window_manager.dart';
+import 'package:flutter_libserialport/flutter_libserialport.dart';
 
 import 'package:hidrocar_panel/splash_screen.dart';
 import 'package:hidrocar_panel/cross_page.dart';
@@ -10,48 +12,77 @@ import 'package:hidrocar_panel/front_camera.dart';
 
 import 'car_data_service.dart';
 import 'car_data.dart';
-import 'package:flutter_libserialport/flutter_libserialport.dart';
-import 'serial_service.dart'; // UART/Serial dinleyici
+import 'serial_service.dart';
 
-// Global navigator key
+// -------------------- Global --------------------
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
-
-// Track the currently displayed page
 enum CurrentPage { cross, backCamera, frontCamera }
 CurrentPage currentPage = CurrentPage.cross;
 
-void main() {
+// -------------------- Main --------------------
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Pencere ayarları (Windows & Linux)
+  await windowManager.ensureInitialized();
+  const windowOptions = WindowOptions(
+    titleBarStyle: TitleBarStyle.hidden, // başlık çubuğu yok
+    fullScreen: true,                    // tam ekran
+    backgroundColor: Colors.black,
+    skipTaskbar: false,
+    windowButtonVisibility: false,       // min/max/close gizle
+  );
+  await windowManager.waitUntilReadyToShow(windowOptions, () async {
+    await windowManager.setFullScreen(true);
+    await windowManager.setResizable(false);   // yeniden boyutlandırma kapalı
+    await windowManager.setPreventClose(true); // kapatma engelli
+    await windowManager.show();
+    await windowManager.focus();
+  });
+  // Kapatma isteği gelirse tamamen yok say (istersen diyalog koyabilirsin)
+  windowManager.addListener(_WndListener());
+
+  // Sistem UI (örn. imleç/menü çubukları) gizli
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersive);
 
-  // Global keyboard handler (optional)
+  // Global klavye kısayolları (opsiyonel)
   ServicesBinding.instance.keyboard.addHandler(_handleGlobalKeyEvent);
 
-  // Platforma göre seri haberleşmeyi başlat
+  // Seri portu başlat
   _startSerialByPlatform();
 
-  // Simulated telemetry (UI canlanması için)
+  // UI canlı kalsın diye simülasyon
   _startSimulatedData();
 
   runApp(const MyApp());
 }
 
-/// Platforma göre doğru seri portu seç ve dinlemeyi başlatır.
+// -------------------- Window listener --------------------
+class _WndListener with WindowListener {
+  @override
+  void onWindowClose() async {
+    final prevent = await windowManager.isPreventClose();
+    if (prevent) {
+      // Tamamen engelle (istersen burada onay penceresi aç)
+      return;
+    }
+  }
+}
+
+// -------------------- Serial başlangıcı --------------------
 void _startSerialByPlatform() {
   final env = Platform.environment;
   final envPort = env['SERIAL_PORT'];
 
   if (Platform.isLinux) {
-    // Mevcut portları al ve logla (teşhis için çok faydalı)
     final ports = SerialPort.availablePorts;
     debugPrint('availablePorts: $ports');
 
-    // 1) ENV ile gelmişse ve listede varsa onu kullan
     String? preferred;
     if (envPort != null && envPort.isNotEmpty && ports.contains(envPort)) {
       preferred = envPort;
     } else {
-      // 2) Yaygın Linux/RPi isimleri arasından seç
+      // RPi ve Linux’ta en yaygın yollar
       preferred = ports.firstWhere(
             (p) => p.contains('/dev/serial0'),
         orElse: () => ports.firstWhere(
@@ -60,7 +91,7 @@ void _startSerialByPlatform() {
                 (p) => p.contains('/dev/ttyS'),
             orElse: () => ports.firstWhere(
                   (p) => p.contains('/dev/ttyUSB'),
-              orElse: () => '', // bulunamadı -> otomatiğe bırak
+              orElse: () => '', // bulunamadı -> auto-scan
             ),
           ),
         ),
@@ -70,8 +101,8 @@ void _startSerialByPlatform() {
 
     SerialService().start(
       onLine: onSerialLine,
-      preferredPortName: preferred ?? '', // yoksa boş ver
-      fallbackToAuto: true,               // auto-scan devreye girer
+      preferredPortName: preferred ?? '',
+      fallbackToAuto: true,
     );
   } else if (Platform.isWindows) {
     final ports = SerialPort.availablePorts;
@@ -94,15 +125,13 @@ void _startSerialByPlatform() {
   }
 }
 
-/// UART/Serial'dan gelen her satır
+// -------------------- Gelen seri satırlar --------------------
 void onSerialLine(String line) {
   final msg = line.trim().toLowerCase();
   if (msg.isEmpty) return;
 
-  // Log
   debugPrint('UART/Serial: $msg');
 
-  // Sayfa değiştir
   void go(Widget page, CurrentPage pageId) {
     if (currentPage == pageId) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -123,7 +152,7 @@ void onSerialLine(String line) {
   }
 }
 
-// Kısayol tuşları (opsiyonel)
+// -------------------- Kısayol tuşları (opsiyonel) --------------------
 bool _handleGlobalKeyEvent(KeyEvent event) {
   if (event is KeyDownEvent) {
     if (event.logicalKey == LogicalKeyboardKey.f1) {
@@ -140,6 +169,7 @@ bool _handleGlobalKeyEvent(KeyEvent event) {
   return false;
 }
 
+// -------------------- App --------------------
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
   @override
@@ -152,7 +182,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
-// Telemetri simülasyonu (UI canlı kalsın)
+// -------------------- Telemetri simülasyonu --------------------
 void _startSimulatedData() {
   double batteryPercentage = 50;
   double speed = 0;
@@ -176,11 +206,9 @@ void _startSimulatedData() {
     }
 
     if (isCharging) {
-      batteryPercentage = batteryPercentage + 0.05;
-      if (batteryPercentage > 100) batteryPercentage = 100;
+      batteryPercentage = (batteryPercentage + 0.05).clamp(0, 100);
     } else {
-      batteryPercentage = batteryPercentage - 0.01;
-      if (batteryPercentage < 0) batteryPercentage = 0;
+      batteryPercentage = (batteryPercentage - 0.01).clamp(0, 100);
     }
 
     CarDataService().updateData(CarData(
