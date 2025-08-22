@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io' show Platform, Process;
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_libserialport/flutter_libserialport.dart';
@@ -13,80 +13,22 @@ import 'car_data_service.dart';
 import 'car_data.dart';
 import 'serial_service.dart';
 
-// -------------------- Global --------------------
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 enum CurrentPage { cross, backCamera, frontCamera }
 CurrentPage currentPage = CurrentPage.cross;
 
-// kiosk uygulandı bayrağı
-bool _kioskApplied = false;
-
-// -------------------- Main --------------------
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // İçerik tam ekran (sistem çubuklarını gizle)
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
 
-  // (Opsiyonel) Global kısayollar
   ServicesBinding.instance.keyboard.addHandler(_handleGlobalKeyEvent);
 
-  // Serial başlat
   _startSerialByPlatform();
-
-  // Simülasyon
-  _startSimulatedData();
+  _startSimulatedData(); // Gerek yoksa yorum satırı yap
 
   runApp(const MyApp());
-
-  // Linux (X11) için kiosk’u yalnızca 1 kez uygula
-  if (Platform.isLinux) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      applyKioskOnceStable();
-    });
-  }
 }
 
-// -------------------- Linux Kiosk (X11) --------------------
-Future<void> applyKioskOnceStable() async {
-  if (_kioskApplied || !Platform.isLinux) return;
-  _kioskApplied = true;
-
-  Future<void> run(String cmd) async {
-    try {
-      await Process.run('bash', ['-lc', cmd]);
-    } catch (_) {}
-  }
-
-  Future<String?> getActiveWinId() async {
-    try {
-      final res = await Process.run('bash', ['-lc', 'xdotool getactivewindow']);
-      final id = (res.stdout as String?)?.trim();
-      return (id != null && id.isNotEmpty) ? id : null;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  // Pencere map olana kadar kısa retry (maks 6 deneme, ~1.5 sn)
-  int tries = 0;
-  Timer.periodic(const Duration(milliseconds: 250), (t) async {
-    tries++;
-    final id = await getActiveWinId();
-    if (id != null) {
-      // Tam ekran
-      await run('wmctrl -i -r $id -b add,fullscreen');
-      // Dekorasyonları kapat (birçok WM destekler)
-      await run('xprop -id $id -f _MOTIF_WM_HINTS 32c '
-          '-set _MOTIF_WM_HINTS "2, 0, 0, 0, 0"');
-      t.cancel();
-    } else if (tries >= 6) {
-      t.cancel();
-    }
-  });
-}
-
-// -------------------- Serial başlangıcı --------------------
 void _startSerialByPlatform() {
   final env = Platform.environment;
   final envPort = env['SERIAL_PORT'];
@@ -107,7 +49,7 @@ void _startSerialByPlatform() {
                 (p) => p.contains('/dev/ttyS'),
             orElse: () => ports.firstWhere(
                   (p) => p.contains('/dev/ttyUSB'),
-              orElse: () => '', // bulunamadı -> auto-scan
+              orElse: () => '',
             ),
           ),
         ),
@@ -141,11 +83,9 @@ void _startSerialByPlatform() {
   }
 }
 
-// -------------------- Gelen seri satırlar --------------------
 void onSerialLine(String line) {
   final msg = line.trim().toLowerCase();
   if (msg.isEmpty) return;
-
   debugPrint('UART/Serial: $msg');
 
   void go(Widget page, CurrentPage pageId) {
@@ -168,7 +108,6 @@ void onSerialLine(String line) {
   }
 }
 
-// -------------------- Kısayol tuşları (opsiyonel) --------------------
 bool _handleGlobalKeyEvent(KeyEvent event) {
   if (event is KeyDownEvent) {
     if (event.logicalKey == LogicalKeyboardKey.f1) {
@@ -182,7 +121,6 @@ bool _handleGlobalKeyEvent(KeyEvent event) {
   return false;
 }
 
-// -------------------- App --------------------
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
   @override
@@ -195,7 +133,6 @@ class MyApp extends StatelessWidget {
   }
 }
 
-// -------------------- Telemetri simülasyonu --------------------
 void _startSimulatedData() {
   double batteryPercentage = 50;
   double speed = 0;
@@ -203,6 +140,7 @@ void _startSimulatedData() {
   bool isCharging = true;
   int chargingStateCounter = 0;
 
+  // Not: Pi’de CPU için istersen 100ms -> 200ms yap
   Timer.periodic(const Duration(milliseconds: 100), (timer) {
     if (speedIncreasing) {
       speed += 0.5;
@@ -218,11 +156,8 @@ void _startSimulatedData() {
       chargingStateCounter = 0;
     }
 
-    if (isCharging) {
-      batteryPercentage = (batteryPercentage + 0.05).clamp(0, 100);
-    } else {
-      batteryPercentage = (batteryPercentage - 0.01).clamp(0, 100);
-    }
+    batteryPercentage = (batteryPercentage + (isCharging ? 0.05 : -0.01))
+        .clamp(0, 100);
 
     CarDataService().updateData(CarData(
       batteryPercentage: batteryPercentage,
