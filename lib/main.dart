@@ -1,8 +1,7 @@
 import 'dart:async';
-import 'dart:io' show Platform, Process, ProcessResult;
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:window_manager/window_manager.dart';
 import 'package:flutter_libserialport/flutter_libserialport.dart';
 
 import 'package:hidrocar_panel/splash_screen.dart';
@@ -23,80 +22,19 @@ CurrentPage currentPage = CurrentPage.cross;
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 1) Tam ekran: Tüm platformlarda Flutter’ın immersive modu
+  // Tüm platformlarda sistem çubuklarını gizle (tam ekran içerik)
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
 
-  // 2) Sadece desteklenen masaüstlerinde window_manager kullan
-  await _initDesktopWindowIfSupported();
-
-  // 3) Global kısayollar (opsiyonel)
+  // (Opsiyonel) Global kısayollar
   ServicesBinding.instance.keyboard.addHandler(_handleGlobalKeyEvent);
 
-  // 4) Seri portu başlat
+  // Seri portu başlat
   _startSerialByPlatform();
 
-  // 5) UI canlı kalsın diye simülasyon
+  // Telemetri simülasyonu
   _startSimulatedData();
 
   runApp(const MyApp());
-}
-
-/// window_manager sadece Windows ve Linux **x64**’te çalıştırılır.
-/// Linux’ta mimariyi `uname -m` ile kontrol ediyoruz (arm/aarch64 ise atla).
-Future<void> _initDesktopWindowIfSupported() async {
-  try {
-    final bool isWindows = Platform.isWindows;
-    final bool isLinux = Platform.isLinux;
-
-    bool isLinuxArm = false;
-    if (isLinux) {
-      // uname -m -> x86_64, aarch64, armv7l ...
-      final ProcessResult r = await Process.run('uname', ['-m']);
-      final arch = (r.stdout as String?)?.trim().toLowerCase() ?? '';
-      isLinuxArm = arch.contains('arm') || arch.contains('aarch64');
-      debugPrint('Linux arch: $arch  (arm? $isLinuxArm)');
-    }
-
-    if (isWindows || (isLinux && !isLinuxArm)) {
-      await windowManager.ensureInitialized();
-
-      const windowOptions = WindowOptions(
-        titleBarStyle: TitleBarStyle.hidden,  // macOS/Windows: başlık gizli
-        backgroundColor: Colors.black,
-      );
-
-      await windowManager.waitUntilReadyToShow(windowOptions, () async {
-        // Windows/Linux x64: çerçevesiz + tam ekran + yeniden boyutlandırma kapalı
-        await windowManager.setAsFrameless();
-        await windowManager.setResizable(false);
-        await windowManager.setPreventClose(true);
-        await windowManager.setFullScreen(true);
-        await windowManager.show();
-        await windowManager.focus();
-      });
-
-      // Kapatmayı tamamen engelle (istersen burada onay diyaloğu yaz)
-      windowManager.addListener(_WndListener());
-    } else {
-      // ARM Linux (ör. Raspberry Pi): window_manager KULLANMA
-      debugPrint('window_manager skipped on this platform/arch.');
-    }
-  } catch (e) {
-    // Her ihtimale karşı: missing plugin vs. durumunda sorunsuz devam et
-    debugPrint('window_manager init skipped due to error: $e');
-  }
-}
-
-// -------------------- Window listener --------------------
-class _WndListener with WindowListener {
-  @override
-  void onWindowClose() async {
-    final prevent = await windowManager.isPreventClose();
-    if (prevent) {
-      // Tamamen engelle; istersen burada onay diyaloğu aç
-      return;
-    }
-  }
 }
 
 // -------------------- Serial başlangıcı --------------------
@@ -147,7 +85,6 @@ void _startSerialByPlatform() {
       fallbackToAuto: true,
     );
   } else {
-    // Diğer platformlarda otomatik tarama
     SerialService().start(
       onLine: onSerialLine,
       preferredPortName: envPort ?? '',
@@ -187,14 +124,11 @@ void onSerialLine(String line) {
 bool _handleGlobalKeyEvent(KeyEvent event) {
   if (event is KeyDownEvent) {
     if (event.logicalKey == LogicalKeyboardKey.f1) {
-      onSerialLine('button-1');
-      return true;
+      onSerialLine('button-1'); return true;
     } else if (event.logicalKey == LogicalKeyboardKey.f2) {
-      onSerialLine('button-2');
-      return true;
+      onSerialLine('button-2'); return true;
     } else if (event.logicalKey == LogicalKeyboardKey.f3) {
-      onSerialLine('button-3');
-      return true;
+      onSerialLine('button-3'); return true;
     }
   }
   return false;
