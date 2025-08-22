@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:io' show Platform;
+import 'dart:io' show Platform, Process, ProcessResult;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
@@ -23,52 +23,79 @@ CurrentPage currentPage = CurrentPage.cross;
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Window Manager init
-  await windowManager.ensureInitialized();
+  // 1) Tam ekran: Tüm platformlarda Flutter’ın immersive modu
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
 
-  // macOS için başlık çubuğunu gizle; diğer platformlarda yok sayılır.
-  const windowOptions = WindowOptions(
-    titleBarStyle: TitleBarStyle.hidden,
-    backgroundColor: Colors.black,
-  );
+  // 2) Sadece desteklenen masaüstlerinde window_manager kullan
+  await _initDesktopWindowIfSupported();
 
-  await windowManager.waitUntilReadyToShow(windowOptions, () async {
-    // Windows/Linux: çerçevesiz hale getir (butonlar yok)
-    await windowManager.setAsFrameless();
-
-    // Genel pencere davranışı
-    await windowManager.setResizable(false);
-    await windowManager.setPreventClose(true);
-    await windowManager.setFullScreen(true); // tam ekran
-    await windowManager.show();
-    await windowManager.focus();
-  });
-
-  // (İsteğe bağlı) Kapatma isteğini tamamen engelle
-  windowManager.addListener(_WndListener());
-
-  // Sistem UI çubuklarını yok et
-  SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersive);
-
-  // Global kısayollar (opsiyonel)
+  // 3) Global kısayollar (opsiyonel)
   ServicesBinding.instance.keyboard.addHandler(_handleGlobalKeyEvent);
 
-  // Seri portu başlat
+  // 4) Seri portu başlat
   _startSerialByPlatform();
 
-  // Telemetri simülasyonu
+  // 5) UI canlı kalsın diye simülasyon
   _startSimulatedData();
 
   runApp(const MyApp());
+}
+
+/// window_manager sadece Windows ve Linux **x64**’te çalıştırılır.
+/// Linux’ta mimariyi `uname -m` ile kontrol ediyoruz (arm/aarch64 ise atla).
+Future<void> _initDesktopWindowIfSupported() async {
+  try {
+    final bool isWindows = Platform.isWindows;
+    final bool isLinux = Platform.isLinux;
+
+    bool isLinuxArm = false;
+    if (isLinux) {
+      // uname -m -> x86_64, aarch64, armv7l ...
+      final ProcessResult r = await Process.run('uname', ['-m']);
+      final arch = (r.stdout as String?)?.trim().toLowerCase() ?? '';
+      isLinuxArm = arch.contains('arm') || arch.contains('aarch64');
+      debugPrint('Linux arch: $arch  (arm? $isLinuxArm)');
+    }
+
+    if (isWindows || (isLinux && !isLinuxArm)) {
+      await windowManager.ensureInitialized();
+
+      const windowOptions = WindowOptions(
+        titleBarStyle: TitleBarStyle.hidden,  // macOS/Windows: başlık gizli
+        backgroundColor: Colors.black,
+      );
+
+      await windowManager.waitUntilReadyToShow(windowOptions, () async {
+        // Windows/Linux x64: çerçevesiz + tam ekran + yeniden boyutlandırma kapalı
+        await windowManager.setAsFrameless();
+        await windowManager.setResizable(false);
+        await windowManager.setPreventClose(true);
+        await windowManager.setFullScreen(true);
+        await windowManager.show();
+        await windowManager.focus();
+      });
+
+      // Kapatmayı tamamen engelle (istersen burada onay diyaloğu yaz)
+      windowManager.addListener(_WndListener());
+    } else {
+      // ARM Linux (ör. Raspberry Pi): window_manager KULLANMA
+      debugPrint('window_manager skipped on this platform/arch.');
+    }
+  } catch (e) {
+    // Her ihtimale karşı: missing plugin vs. durumunda sorunsuz devam et
+    debugPrint('window_manager init skipped due to error: $e');
+  }
 }
 
 // -------------------- Window listener --------------------
 class _WndListener with WindowListener {
   @override
   void onWindowClose() async {
-    // Tamamen engelle (istersen burada onay diyaloğu gösterebilirsin)
     final prevent = await windowManager.isPreventClose();
-    if (prevent) return;
+    if (prevent) {
+      // Tamamen engelle; istersen burada onay diyaloğu aç
+      return;
+    }
   }
 }
 
@@ -85,6 +112,7 @@ void _startSerialByPlatform() {
     if (envPort != null && envPort.isNotEmpty && ports.contains(envPort)) {
       preferred = envPort;
     } else {
+      // RPi & Linux’ta yaygın adlar
       preferred = ports.firstWhere(
             (p) => p.contains('/dev/serial0'),
         orElse: () => ports.firstWhere(
@@ -119,6 +147,7 @@ void _startSerialByPlatform() {
       fallbackToAuto: true,
     );
   } else {
+    // Diğer platformlarda otomatik tarama
     SerialService().start(
       onLine: onSerialLine,
       preferredPortName: envPort ?? '',
