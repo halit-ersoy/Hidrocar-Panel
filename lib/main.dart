@@ -1,11 +1,8 @@
 import 'dart:async';
-import 'dart:io' show Platform, Process, ProcessResult;
+import 'dart:io' show Platform, Process;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_libserialport/flutter_libserialport.dart';
-
-// Windows x64 için (Linux ARM'de çağrılmayacak)
-import 'package:window_manager/window_manager.dart' as wm;
 
 import 'package:hidrocar_panel/splash_screen.dart';
 import 'package:hidrocar_panel/cross_page.dart';
@@ -16,83 +13,80 @@ import 'car_data_service.dart';
 import 'car_data.dart';
 import 'serial_service.dart';
 
+// -------------------- Global --------------------
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 enum CurrentPage { cross, backCamera, frontCamera }
 CurrentPage currentPage = CurrentPage.cross;
 
+// kiosk uygulandı bayrağı
+bool _kioskApplied = false;
+
+// -------------------- Main --------------------
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // İçerik tam ekran; sistem çubukları gizli
+  // İçerik tam ekran (sistem çubuklarını gizle)
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
 
-  // Masaüstü pencereyi ayarla
-  await _initWindowKiosk();
-
-  // Kısayol (opsiyonel)
+  // (Opsiyonel) Global kısayollar
   ServicesBinding.instance.keyboard.addHandler(_handleGlobalKeyEvent);
 
-  // Serial
+  // Serial başlat
   _startSerialByPlatform();
 
   // Simülasyon
   _startSimulatedData();
 
   runApp(const MyApp());
-}
 
-Future<void> _initWindowKiosk() async {
-  if (Platform.isWindows) {
-    // Windows (x64): window_manager ile frameless+fullscreen
-    try {
-      await wm.windowManager.ensureInitialized();
-      const opts = wm.WindowOptions(
-        titleBarStyle: wm.TitleBarStyle.hidden,
-        backgroundColor: Colors.black,
-      );
-      await wm.windowManager.waitUntilReadyToShow(opts, () async {
-        await wm.windowManager.setAsFrameless();
-        await wm.windowManager.setResizable(false);
-        await wm.windowManager.setPreventClose(true);
-        await wm.windowManager.setFullScreen(true);
-        await wm.windowManager.show();
-        await wm.windowManager.focus();
-      });
-      wm.windowManager.addListener(_WndListener());
-    } catch (_) {/* Windows dışında/yoksa sessiz geç */}
-  } else if (Platform.isLinux) {
-    // Linux (ARM dahil): X11 araçlarıyla tam ekran + dekorasyonsuz
-    // Not: Wayland'da çalışmaz; X11/LXDE, XFCE, Openbox gibi WM'lerde çalışır.
-    Future<void> run(String cmd) async {
-      try { await Process.run('bash', ['-lc', cmd]); } catch (_) {}
-    }
-
-    // Pencere görünene kadar kısa bekleyip (500–800ms) uygula
-    Future.delayed(const Duration(milliseconds: 700), () async {
-      // Tam ekran ve "always on top"
-      await run('wmctrl -r :ACTIVE: -b add,fullscreen');
-      await run('wmctrl -r :ACTIVE: -b add,above');
-      // Dekorasyonları kaldır (birçok WM destekler)
-      await run('xprop -id \$(xdotool getactivewindow) '
-          '-f _MOTIF_WM_HINTS 32c '
-          '-set _MOTIF_WM_HINTS "2, 0, 0, 0, 0"');
+  // Linux (X11) için kiosk’u yalnızca 1 kez uygula
+  if (Platform.isLinux) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      applyKioskOnceStable();
     });
   }
 }
 
-// Windows’ta kapatmayı engelleme (opsiyonel)
-class _WndListener with wm.WindowListener {
-  @override
-  void onWindowClose() async {
-    final prevent = await wm.windowManager.isPreventClose();
-    if (prevent) {
-      // tam engelle
-      return;
+// -------------------- Linux Kiosk (X11) --------------------
+Future<void> applyKioskOnceStable() async {
+  if (_kioskApplied || !Platform.isLinux) return;
+  _kioskApplied = true;
+
+  Future<void> run(String cmd) async {
+    try {
+      await Process.run('bash', ['-lc', cmd]);
+    } catch (_) {}
+  }
+
+  Future<String?> getActiveWinId() async {
+    try {
+      final res = await Process.run('bash', ['-lc', 'xdotool getactivewindow']);
+      final id = (res.stdout as String?)?.trim();
+      return (id != null && id.isNotEmpty) ? id : null;
+    } catch (_) {
+      return null;
     }
   }
+
+  // Pencere map olana kadar kısa retry (maks 6 deneme, ~1.5 sn)
+  int tries = 0;
+  Timer.periodic(const Duration(milliseconds: 250), (t) async {
+    tries++;
+    final id = await getActiveWinId();
+    if (id != null) {
+      // Tam ekran
+      await run('wmctrl -i -r $id -b add,fullscreen');
+      // Dekorasyonları kapat (birçok WM destekler)
+      await run('xprop -id $id -f _MOTIF_WM_HINTS 32c '
+          '-set _MOTIF_WM_HINTS "2, 0, 0, 0, 0"');
+      t.cancel();
+    } else if (tries >= 6) {
+      t.cancel();
+    }
+  });
 }
 
-// ---- Serial başlangıcı ----
+// -------------------- Serial başlangıcı --------------------
 void _startSerialByPlatform() {
   final env = Platform.environment;
   final envPort = env['SERIAL_PORT'];
@@ -129,6 +123,7 @@ void _startSerialByPlatform() {
   } else if (Platform.isWindows) {
     final ports = SerialPort.availablePorts;
     debugPrint('availablePorts: $ports');
+
     String? preferred = envPort?.isNotEmpty == true ? envPort : null;
     preferred ??= ports.contains('COM11') ? 'COM11' : null;
 
@@ -146,7 +141,7 @@ void _startSerialByPlatform() {
   }
 }
 
-// ---- Gelen seri satırlar ----
+// -------------------- Gelen seri satırlar --------------------
 void onSerialLine(String line) {
   final msg = line.trim().toLowerCase();
   if (msg.isEmpty) return;
@@ -173,7 +168,7 @@ void onSerialLine(String line) {
   }
 }
 
-// ---- Kısayollar (opsiyonel) ----
+// -------------------- Kısayol tuşları (opsiyonel) --------------------
 bool _handleGlobalKeyEvent(KeyEvent event) {
   if (event is KeyDownEvent) {
     if (event.logicalKey == LogicalKeyboardKey.f1) {
@@ -187,6 +182,7 @@ bool _handleGlobalKeyEvent(KeyEvent event) {
   return false;
 }
 
+// -------------------- App --------------------
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
   @override
@@ -199,7 +195,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
-// ---- Telemetri simülasyonu ----
+// -------------------- Telemetri simülasyonu --------------------
 void _startSimulatedData() {
   double batteryPercentage = 50;
   double speed = 0;
