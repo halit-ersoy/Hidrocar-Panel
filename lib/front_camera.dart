@@ -93,7 +93,7 @@ class _FrontCameraState extends State<FrontCamera> {
                 'ya da betiği uygulamanın yanında veya Hidrocar-Panel klasöründe tutabilirsiniz.');
       }
 
-      // *** DEĞİŞİKLİK: Ön kamera için indeks olarak 1 kullanılıyor. ***
+      // *** DEĞİŞİKLİK: Ön kamera için indeks olarak 0 kullanılıyor. ***
       const int cameraIndex = 0;
       final scriptDir = File(scriptPath).parent.path;
 
