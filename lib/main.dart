@@ -9,9 +9,9 @@ import 'package:hidrocar_panel/cross_page.dart';
 import 'package:hidrocar_panel/back_camera.dart';
 import 'package:hidrocar_panel/front_camera.dart';
 
-import 'car_data_service.dart';
-import 'car_data.dart';
-import 'serial_service.dart';
+import 'services/car_data_service.dart';
+import 'data/car_data.dart';
+import 'services/serial_service.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 enum CurrentPage { cross, backCamera, frontCamera }
@@ -23,7 +23,7 @@ Future<void> main() async {
 
   ServicesBinding.instance.keyboard.addHandler(_handleGlobalKeyEvent);
 
-  _startSerialByPlatform();
+  //_startSerialByPlatform();
   _startSimulatedData(); // Gerek yoksa yorum satırı yap
 
   runApp(const MyApp());

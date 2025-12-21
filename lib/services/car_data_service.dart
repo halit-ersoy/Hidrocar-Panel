@@ -1,7 +1,7 @@
 // lib/services/car_data_service.dart
 import 'dart:async';
 
-import 'car_data.dart';
+import '../data/car_data.dart';
 
 class CarDataService {
   static final CarDataService _instance = CarDataService._internal();

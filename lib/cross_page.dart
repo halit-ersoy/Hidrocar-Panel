@@ -1,9 +1,9 @@
-import 'dart:async';
+// lib/cross_page.dart
 import 'package:flutter/material.dart';
 import 'package:hidrocar_panel/ui/painter/speedometer.dart';
-import 'car_data_service.dart';
-import 'car_data.dart';
+import 'package:hidrocar_panel/vm/dashboard_view_model.dart';
 import 'function_key.dart';
+// ViewModel'i import et
 
 class CrossPage extends StatefulWidget {
   const CrossPage({super.key});
@@ -12,178 +12,91 @@ class CrossPage extends StatefulWidget {
   State<CrossPage> createState() => _CrossPageState();
 }
 
-// Add enum for warning levels
-enum WarningLevel { yellow, red, critical }
-
 class _CrossPageState extends State<CrossPage> {
-  CarData _carData = CarData();
-  late final StreamSubscription<CarData> _dataSubscription;
-  late final Stream<String> _timeStream;
+  // ViewModel'i tanımla
+  late final DashboardViewModel _viewModel;
 
   @override
   void initState() {
     super.initState();
-    _dataSubscription = CarDataService().dataStream.listen((data) {
-      setState(() {
-        _carData = data;
-      });
-    });
-
-    // Initialize time stream once
-    _timeStream = Stream.periodic(const Duration(seconds: 1), (_) {
-      final now = DateTime.now();
-      return "${now.hour.toString().padLeft(2, '0')}:"
-          "${now.minute.toString().padLeft(2, '0')}:"
-          "${now.second.toString().padLeft(2, '0')}";
-    });
+    _viewModel = DashboardViewModel(); // ViewModel başlatılıyor
   }
 
   @override
   void dispose() {
-    _dataSubscription.cancel();
+    _viewModel.dispose(); // Bellek sızıntısını önle
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // Check for critical warnings
-    bool hasCriticalWarning = false;
-    String criticalMessage = "";
-
-    // Check isolation resistance critical
-    if (_carData.isolationResistance < 10) {
-      hasCriticalWarning = true;
-      criticalMessage =
-          "İzolasyon Direnci Kritik Seviyede!\n${_carData.isolationResistance.toInt()}Ω";
-    }
-
-    // Check battery temperature critical
-    if (_carData.batteryTemperature > 90) {
-      hasCriticalWarning = true;
-      criticalMessage =
-          "Batarya Sıcaklığı Kritik Seviyede!\n${_carData.batteryTemperature.toInt()}°C";
-    }
-
-    // Determine warning levels
-    WarningLevel? isolationWarningLevel;
-    if (_carData.isolationResistance < 30) {
-      isolationWarningLevel = WarningLevel.red;
-    } else if (_carData.isolationResistance < 50) {
-      isolationWarningLevel = WarningLevel.yellow;
-    }
-
-    WarningLevel? temperatureWarningLevel;
-    if (_carData.batteryTemperature > 75) {
-      temperatureWarningLevel = WarningLevel.red;
-    } else if (_carData.batteryTemperature > 60) {
-      temperatureWarningLevel = WarningLevel.yellow;
-    }
-
-    return Scaffold(
-        backgroundColor: Colors.black,
-        body: LayoutBuilder(
-          builder: (context, constraints) {
-            final screenWidth = constraints.maxWidth;
-            final screenHeight = constraints.maxHeight;
-
-            return Stack(
-              children: [
-                Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [Colors.black, Colors.blue.shade900],
-                    ),
-                  ),
-                  child: SafeArea(
-                    child: Padding(
-                      padding: EdgeInsets.all(screenWidth * 0.02),
-                      child: Column(
-                        children: [
-                          _buildTopSection(),
-                          Expanded(
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  flex: 35,
-                                  child: _buildLeftPanel(context),
-                                ),
-                                Expanded(
-                                  flex: 50,
-                                  child: _buildCenterSpeedometer(screenHeight),
-                                ),
-                                Expanded(
-                                  flex: 35,
-                                  child: _buildRightPanel(
-                                    context,
-                                    isolationWarningLevel:
-                                        isolationWarningLevel,
-                                    temperatureWarningLevel:
-                                        temperatureWarningLevel,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                // Show critical warning overlay if needed
-                if (hasCriticalWarning)
-                  Positioned.fill(
-                    child: _buildCriticalWarning(criticalMessage),
-                  ),
-                Positioned(
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  child: Container(
-                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+    // ListenableBuilder, ViewModel'de "notifyListeners()" denildiğinde burayı yeniden çizer.
+    return ListenableBuilder(
+      listenable: _viewModel,
+      builder: (context, child) {
+        // Artık verileri _viewModel üzerinden alıyoruz
+        return Scaffold(
+          backgroundColor: Colors.black,
+          body: LayoutBuilder(
+            builder: (context, constraints) {
+              return Stack(
+                children: [
+                  Container(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
-                        begin: Alignment.bottomCenter,
-                        end: Alignment.topCenter,
-                        colors: [
-                          Colors.black.withOpacity(0.8),
-                          Colors.transparent,
-                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Colors.black, Colors.blue.shade900],
                       ),
                     ),
-                    child: Center(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 10),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.6),
-                          borderRadius: BorderRadius.circular(30),
-                          border: Border.all(
-                              color: Colors.blue.withOpacity(0.3), width: 1),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
+                    child: SafeArea(
+                      child: Padding(
+                        padding: EdgeInsets.all(constraints.maxWidth * 0.02),
+                        child: Column(
                           children: [
-                            FunctionKey(
-                                label: 'F1',
-                                description: 'Ana Ekran',
-                                isActive: true),
-                            SizedBox(width: 16),
-                            FunctionKey(
-                                label: 'F2', description: 'Arka Kamera'),
-                            SizedBox(width: 16),
-                            FunctionKey(label: 'F3', description: 'Ön Kamera'),
+                            _buildTopSection(),
+                            Expanded(
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    flex: 35,
+                                    child: _buildLeftPanel(),
+                                  ),
+                                  Expanded(
+                                    flex: 50,
+                                    child: _buildCenterSpeedometer(constraints.maxHeight),
+                                  ),
+                                  Expanded(
+                                    flex: 35,
+                                    child: _buildRightPanel(),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ],
                         ),
                       ),
                     ),
                   ),
-                ),
-              ],
-            );
-          },
-        ));
+
+                  // Kritik Uyarı Katmanı (Logic artık ViewModel'de)
+                  if (_viewModel.hasCriticalWarning)
+                    Positioned.fill(
+                      child: _buildCriticalWarning(_viewModel.criticalMessage),
+                    ),
+
+                  // Alt Fonksiyon Tuşları
+                  Positioned(
+                    bottom: 0, left: 0, right: 0,
+                    child: _buildBottomBar(),
+                  ),
+                ],
+              );
+            },
+          ),
+        );
+      },
+    );
   }
 
   Widget _buildTopSection() {
@@ -194,11 +107,7 @@ class _CrossPageState extends State<CrossPage> {
         color: Colors.black54,
         borderRadius: BorderRadius.circular(30),
         boxShadow: [
-          BoxShadow(
-            color: Colors.blue.withOpacity(0.2),
-            blurRadius: 15,
-            spreadRadius: 2,
-          ),
+          BoxShadow(color: Colors.blue.withOpacity(0.2), blurRadius: 15, spreadRadius: 2),
         ],
       ),
       child: Row(
@@ -206,19 +115,11 @@ class _CrossPageState extends State<CrossPage> {
         children: [
           Icon(Icons.access_time, color: Colors.blue.shade300, size: 32),
           const SizedBox(width: 12),
-          StreamBuilder<String>(
-            stream: _timeStream,
-            builder: (context, snapshot) {
-              return Text(
-                snapshot.data ?? DateTime.now().toString().substring(11, 19),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 42,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 2,
-                ),
-              );
-            },
+          Text(
+            _viewModel.currentTime, // ViewModel'den geliyor
+            style: const TextStyle(
+              color: Colors.white, fontSize: 42, fontWeight: FontWeight.bold, letterSpacing: 2,
+            ),
           ),
         ],
       ),
@@ -234,148 +135,135 @@ class _CrossPageState extends State<CrossPage> {
           color: Colors.black54,
           shape: BoxShape.circle,
           boxShadow: [
-            BoxShadow(
-              color: Colors.blue.withOpacity(0.4),
-              blurRadius: 30,
-              spreadRadius: 10,
-            ),
+            BoxShadow(color: Colors.blue.withOpacity(0.4), blurRadius: 30, spreadRadius: 10),
           ],
-          border: Border.all(
-            color: Colors.blue.shade700.withOpacity(0.6),
-            width: 3,
-          ),
+          border: Border.all(color: Colors.blue.shade700.withOpacity(0.6), width: 3),
         ),
         child: Padding(
           padding: const EdgeInsets.all(16.0),
-          child: Speedometer(value: _carData.speed),
+          // Hız verisi ViewModel'den
+          child: Speedometer(value: _viewModel.carData.speed),
         ),
       ),
     );
   }
 
-  Widget _buildLeftPanel(BuildContext context) {
-    // Determine if battery is charging based on charge power
-    final bool isCharging = _carData.chargePower > 0;
-
-    // Calculate estimated time text
-    String? estimatedTimeText;
-    if (isCharging) {
-      // Calculate time to full charge (remaining percentage to 100%)
-      final remainingPercentage = 100 - _carData.batteryPercentage;
-      // Assuming charging rate is proportional to charge power
-      final timeToFullHours =
-          (remainingPercentage / ((_carData.chargePower / 1000) * 2)).floor();
-      final timeToFullMinutes =
-          ((remainingPercentage / ((_carData.chargePower / 1000) * 2) -
-                      timeToFullHours) *
-                  60)
-              .floor();
-      estimatedTimeText = 'Dolum: $timeToFullHours saat $timeToFullMinutes dk';
-    }
-
-    return Container(
-      margin: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.black54,
-        borderRadius: BorderRadius.circular(24),
-        border:
-            Border.all(color: Colors.blue.shade500.withOpacity(0.5), width: 2),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.blue.shade900.withOpacity(0.3),
-            blurRadius: 15,
-            spreadRadius: 2,
+  Widget _buildLeftPanel() {
+    return _buildPanelContainer(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          _buildEnhancedInfoRow(
+            icon: _viewModel.batteryIcon,
+            title: 'Batarya Yüzdesi',
+            value: '%${_viewModel.carData.batteryPercentage.toInt()}',
+            additionalInfo: _viewModel.estimatedChargeTimeText,
+            iconColor: _viewModel.batteryIconColor,
+          ),
+          _buildDivider(),
+          _buildEnhancedInfoRow(
+            icon: Icons.electric_bolt,
+            title: 'Kalan Enerji',
+            value: '${_viewModel.carData.remainingEnergy.toInt()}Wh',
+            iconColor: Colors.orangeAccent,
+          ),
+          _buildDivider(),
+          _buildEnhancedInfoRow(
+            icon: Icons.electrical_services,
+            title: 'Şarj Gücü',
+            value: '${_viewModel.carData.chargePower.toInt()}W',
+            iconColor: Colors.purpleAccent, // İstersen bunu da VM'e taşıyabilirsin
+          ),
+          _buildDivider(),
+          _buildEnhancedInfoRow(
+            icon: Icons.electrical_services,
+            title: 'Batarya Akımı',
+            value: '${_viewModel.carData.batteryCurrent.toInt()}A',
+            iconColor: Colors.yellowAccent,
           ),
         ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            _buildEnhancedInfoRow(
-              icon:
-                  isCharging ? Icons.battery_charging_full : Icons.battery_full,
-              title: 'Batarya Yüzdesi',
-              value: '%${_carData.batteryPercentage.toInt()}',
-              additionalInfo: estimatedTimeText,
-              iconColor: isCharging ? Colors.greenAccent : Colors.orange,
-            ),
-            Divider(color: Colors.blue.withOpacity(0.3), height: 1),
-            _buildEnhancedInfoRow(
-              icon: Icons.electric_bolt,
-              title: 'Kalan Enerji',
-              value: '${_carData.remainingEnergy.toInt()}Wh',
-              iconColor: Colors.orangeAccent,
-            ),
-            Divider(color: Colors.blue.withOpacity(0.3), height: 1),
-            _buildEnhancedInfoRow(
-              icon: Icons.electrical_services,
-              title: 'Şarj Gücü',
-              value: '${_carData.chargePower.toInt()}W',
-              iconColor: isCharging ? Colors.greenAccent : Colors.purpleAccent,
-            ),
-            Divider(color: Colors.blue.withOpacity(0.3), height: 1),
-            _buildEnhancedInfoRow(
-              icon: Icons.electrical_services,
-              title: 'Batarya Akımı',
-              value: '${_carData.batteryCurrent.toInt()}A',
-              iconColor: Colors.yellowAccent,
-            ),
-          ],
-        ),
       ),
     );
   }
 
-  Widget _buildRightPanel(
-    BuildContext context, {
-    WarningLevel? temperatureWarningLevel,
-    WarningLevel? isolationWarningLevel,
-  }) {
+  Widget _buildRightPanel() {
+    return _buildPanelContainer(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          _buildEnhancedInfoRow(
+            icon: Icons.bolt,
+            title: 'Batarya Gerilimi',
+            value: '${_viewModel.carData.batteryVoltage.toInt()}V',
+            iconColor: Colors.redAccent,
+          ),
+          _buildDivider(),
+          _buildEnhancedInfoRow(
+            icon: Icons.thermostat,
+            title: 'Batarya Sıcaklığı',
+            value: '${_viewModel.carData.batteryTemperature.toInt()}°C',
+            iconColor: Colors.deepOrangeAccent,
+            warningLevel: _viewModel.tempLevel, // ViewModel'den geliyor
+          ),
+          _buildDivider(),
+          _buildEnhancedInfoRow(
+            icon: Icons.shield,
+            title: 'İzolasyon Direnci',
+            value: '${_viewModel.carData.isolationResistance.toInt()}Ω',
+            iconColor: Colors.tealAccent,
+            warningLevel: _viewModel.isolationLevel, // ViewModel'den geliyor
+          ),
+        ],
+      ),
+    );
+  }
+
+  // --- Yardımcı Widget Metotları (Değişmedi, sadece sadeleşti) ---
+
+  Widget _buildPanelContainer({required Widget child}) {
     return Container(
       margin: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.black54,
         borderRadius: BorderRadius.circular(24),
-        border:
-            Border.all(color: Colors.blue.shade500.withOpacity(0.5), width: 2),
+        border: Border.all(color: Colors.blue.shade500.withOpacity(0.5), width: 2),
         boxShadow: [
-          BoxShadow(
-            color: Colors.blue.shade900.withOpacity(0.3),
-            blurRadius: 15,
-            spreadRadius: 2,
-          ),
+          BoxShadow(color: Colors.blue.shade900.withOpacity(0.3), blurRadius: 15, spreadRadius: 2),
         ],
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            _buildEnhancedInfoRow(
-              icon: Icons.bolt,
-              title: 'Batarya Gerilimi',
-              value: '${_carData.batteryVoltage.toInt()}V',
-              iconColor: Colors.redAccent,
-            ),
-            Divider(color: Colors.blue.withOpacity(0.3), height: 1),
-            _buildEnhancedInfoRow(
-              icon: Icons.thermostat,
-              title: 'Batarya Sıcaklığı',
-              value: '${_carData.batteryTemperature.toInt()}°C',
-              iconColor: Colors.deepOrangeAccent,
-              warningLevel: temperatureWarningLevel,
-            ),
-            Divider(color: Colors.blue.withOpacity(0.3), height: 1),
-            _buildEnhancedInfoRow(
-              icon: Icons.shield,
-              title: 'İzolasyon Direnci',
-              value: '${_carData.isolationResistance.toInt()}Ω',
-              iconColor: Colors.tealAccent,
-              warningLevel: isolationWarningLevel,
-            ),
-          ],
+      child: Padding(padding: const EdgeInsets.all(20), child: child),
+    );
+  }
+
+  Widget _buildDivider() => Divider(color: Colors.blue.withOpacity(0.3), height: 1);
+
+  Widget _buildBottomBar() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.bottomCenter, end: Alignment.topCenter,
+          colors: [Colors.black.withOpacity(0.8), Colors.transparent],
+        ),
+      ),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.6),
+            borderRadius: BorderRadius.circular(30),
+            border: Border.all(color: Colors.blue.withOpacity(0.3), width: 1),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FunctionKey(label: 'F1', description: 'Ana Ekran', isActive: true),
+              const SizedBox(width: 16),
+              FunctionKey(label: 'F2', description: 'Arka Kamera'),
+              const SizedBox(width: 16),
+              FunctionKey(label: 'F3', description: 'Ön Kamera'),
+            ],
+          ),
         ),
       ),
     );
@@ -389,6 +277,7 @@ class _CrossPageState extends State<CrossPage> {
     required Color iconColor,
     WarningLevel? warningLevel,
   }) {
+    // Bu kısım UI gösterimi olduğu için burada kalabilir.
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 12.0),
       child: Row(
@@ -407,46 +296,23 @@ class _CrossPageState extends State<CrossPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  title,
-                  style: TextStyle(
-                    color: Colors.blue.shade100,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
+                Text(title, style: TextStyle(color: Colors.blue.shade100, fontSize: 16, fontWeight: FontWeight.w500)),
                 Row(
                   children: [
-                    Text(
-                      value,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1,
-                      ),
-                    ),
+                    Text(value, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold, letterSpacing: 1)),
                     if (additionalInfo != null) ...[
                       const SizedBox(width: 8),
-                      Text(
-                        additionalInfo,
-                        style: TextStyle(
-                          color: Colors.blue.shade200,
-                          fontSize: 14,
-                        ),
-                      ),
+                      Text(additionalInfo, style: TextStyle(color: Colors.blue.shade200, fontSize: 14)),
                     ],
                   ],
                 ),
               ],
             ),
           ),
-          if (warningLevel != null) ...[
+          if (warningLevel != null && warningLevel != WarningLevel.normal) ...[
             Icon(
               Icons.warning_amber_rounded,
-              color: warningLevel == WarningLevel.yellow
-                  ? Colors.amber
-                  : Colors.red,
+              color: warningLevel == WarningLevel.yellow ? Colors.amber : Colors.red,
               size: 48,
             ),
           ],
@@ -455,7 +321,6 @@ class _CrossPageState extends State<CrossPage> {
     );
   }
 
-  // Critical warning overlay widget
   Widget _buildCriticalWarning(String message) {
     return Container(
       color: Colors.red.withOpacity(0.8),
@@ -463,30 +328,11 @@ class _CrossPageState extends State<CrossPage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
-              Icons.warning_amber_rounded,
-              color: Colors.white,
-              size: 100,
-            ),
+            const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 100),
             const SizedBox(height: 20),
-            const Text(
-              "KRİTİK UYARI",
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 42,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
+            const Text("KRİTİK UYARI", style: TextStyle(color: Colors.white, fontSize: 42, fontWeight: FontWeight.bold)),
             const SizedBox(height: 10),
-            Text(
-              message,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-              ),
-              textAlign: TextAlign.center,
-            ),
+            Text(message, style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
           ],
         ),
       ),
